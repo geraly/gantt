@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Gantt Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#EDEEE7;
+    --panel:#F7F7F2;
+    --ink:#1F2A26;
+    --soft:#5B655F;
+    --grid:#CCCFC3;
+    --line:#B7BBAC;
+    --accent:#C1572B;
+    --crit:#B23A2E;
+    --done-opacity:0.45;
+    --s0:#3D6A72; --s1:#7A8F52; --s2:#8C6B3F; --s3:#5B6E9A; --s4:#96536B; --s5:#4F7A50;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'IBM Plex Sans JP',sans-serif;
+    min-height:100vh;
+  }
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  header{
+    display:flex; align-items:center; gap:20px;
+    padding:14px 20px; border-bottom:2px solid var(--ink);
+    background:var(--panel); flex-wrap:wrap;
+  }
+  .brand{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px; letter-spacing:0.02em; color:var(--soft); white-space:nowrap;}
+  .brand b{color:var(--ink);}
+  header input.title-input{
+    font-size:17px; font-weight:600; border:none; background:transparent;
+    border-bottom:1px solid var(--line); padding:4px 2px; color:var(--ink);
+    min-width:220px; flex:1;
+  }
+  header input.title-input:focus{outline:none; border-bottom:1px solid var(--accent);}
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-left:auto;}
+  button, .filebtn{
+    font-family:'IBM Plex Sans JP',sans-serif; font-size:12.5px; font-weight:500;
+    border:1px solid var(--ink); background:var(--panel); color:var(--ink);
+    padding:7px 12px; cursor:pointer; border-radius:2px;
+  }
+  button:hover, .filebtn:hover{background:var(--ink); color:var(--panel);}
+  button.primary{background:var(--ink); color:var(--panel);}
+  button.primary:hover{background:var(--accent); border-color:var(--accent); color:#fff;}
+  input[type=file]{display:none;}
+  main{display:flex; align-items:flex-start;}
+  #taskPanel{
+    width:340px; min-width:340px; padding:16px; border-right:1px solid var(--line);
+    height:calc(100vh - 66px); overflow-y:auto;
+  }
+  #taskPanel h2{font-size:12px; text-transform:none; color:var(--soft); margin:0 0 10px; font-weight:600;}
+  .card{
+    border:1px solid var(--line); background:var(--panel); padding:10px; margin-bottom:10px; border-radius:2px;
+    position:relative;
+  }
+  .card .row{display:flex; gap:6px; margin-bottom:6px;}
+  .card label{display:block; font-size:10px; color:var(--soft); margin-bottom:2px;}
+  .card input, .card select{
+    width:100%; font-size:12.5px; padding:5px 6px; border:1px solid var(--grid);
+    border-radius:2px; font-family:inherit; background:#fff; color:var(--ink);
+  }
+  .card input:disabled{background:#EEEEE7; color:var(--soft);}
+  .card .del{
+    position:absolute; top:6px; right:6px; border:none; background:none; color:var(--soft);
+    font-size:15px; padding:0 4px; cursor:pointer;
+  }
+  .card .del:hover{color:var(--crit); background:none;}
+  .w2{width:66%;} .w1{width:34%;}
+  #addTaskBtn{width:100%; margin-top:4px;}
+  #chartWrap{
+    flex:1; height:calc(100vh - 66px); overflow:auto; padding:20px;
+  }
+  #chartHint{font-size:12px; color:var(--soft); margin:0 0 12px;}
+  .legend{display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; font-size:11px; color:var(--soft);}
+  .legend span{display:inline-flex; align-items:center; gap:5px;}
+  .swatch{width:10px; height:10px; display:inline-block; border-radius:2px;}
+  svg text{font-family:'IBM Plex Sans JP',sans-serif;}
+  svg .mono-text{font-family:'IBM Plex Mono',monospace;}
+  .taskbar{cursor:grab;}
+  .taskbar:active{cursor:grabbing;}
+  .milestone-shape{cursor:grab;}
+  .milestone-shape:active{cursor:grabbing;}
+  .resize-handle{cursor:ew-resize;}
+  .connector-handle{fill:#fff; stroke:#8B9088; stroke-width:1.2; cursor:crosshair;}
+  .connector-handle:hover{fill:#2F6FBD; stroke:#2F6FBD;}
+  .dep-delete-btn{cursor:pointer;}
+  .dep-delete-btn:hover circle{fill:#FCE8E6; stroke:#B23A2E;}
+  .dep-delete-btn:hover text{fill:#B23A2E;}
+  body.dragging-link *{cursor:crosshair !important;}
+  .taskbar.selected, .milestone-shape.selected{stroke:#2F6FBD !important; stroke-width:2.5px !important; stroke-dasharray:4,2;}
+  body.dragging-move *{cursor:grabbing !important;}
+  body.dragging-resize *{cursor:ew-resize !important;}
+  #status{font-size:11.5px; color:var(--soft); padding:0 20px 14px;}
+  #status.error{color:var(--crit);}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">GANTT <b>STUDIO</b></div>
+  <input class="title-input" id="titleInput" placeholder="プロジェクト名">
+  <div class="toolbar">
+    <button id="addTaskTop">+ タスク追加</button>
+    <label class="filebtn">Mermaid読込<input type="file" id="importMermaidFile" accept=".mmd,.mermaid,.txt"></label>
+    <label class="filebtn">draw.io読込<input type="file" id="importDrawioFile" accept=".xml,.drawio"></label>
+    <button class="primary" id="exportMermaidBtn">Mermaid書出</button>
+    <button class="primary" id="exportDrawioBtn">draw.io書出</button>
+  </div>
+</header>
+<div id="status"></div>
+<main>
+  <div id="taskPanel">
+    <h2>タスク一覧</h2>
+    <div id="cards"></div>
+    <button id="addTaskBtn">+ タスクを追加</button>
+  </div>
+  <div id="chartWrap">
+    <p id="chartHint">バーをドラッグして開始日を変更できます（依存関係がある場合は解除されず、間隔=ラグだけ調整されます）。右端のハンドルで期間を変更、バー右の○をドラッグして別のタスクに繋ぐと依存関係を作成、矢印上の×で解除できます。依存タスク欄に「t1+3」のように書くと間隔を直接指定できます。Shift+クリックで複数選択し、まとめてドラッグできます。</p>
+    <div class="legend" id="legend"></div>
+    <div id="chartHost"></div>
+  </div>
+</main>
+
+<script>
+const SECTION_COLORS = ['var(--s0)','var(--s1)','var(--s2)','var(--s3)','var(--s4)','var(--s5)'];
+const STATUS_OPTIONS = [['','通常'],['active','進行中'],['done','完了'],['crit','クリティカル'],['milestone','マイルストーン']];
+
+let state = {
+  title: 'Webサイトリニューアル',
+  tasks: [
+    {id:'t1', name:'要件定義', section:'企画', start:'2026-09-15', duration:5, status:'done', deps:[]},
+    {id:'t2', name:'要件レビュー', section:'企画', start:'', duration:2, status:'done', deps:[{id:'t1', lag:0}]},
+    {id:'t3', name:'ワイヤーフレーム作成', section:'デザイン', start:'', duration:4, status:'active', deps:[{id:'t2', lag:2}]},
+    {id:'t4', name:'ビジュアルデザイン', section:'デザイン', start:'', duration:6, status:'', deps:[{id:'t3', lag:0}]},
+    {id:'t5', name:'フロントエンド実装', section:'開発', start:'', duration:10, status:'', deps:[{id:'t4', lag:0}]},
+    {id:'t6', name:'バックエンド実装', section:'開発', start:'', duration:12, status:'', deps:[{id:'t4', lag:0}]},
+    {id:'t7', name:'公開', section:'開発', start:'', duration:0, status:'milestone', deps:[{id:'t5', lag:0},{id:'t6', lag:0}]},
+  ]
+};
+let autoIdCounter = 8;
+const sectionColorMap = {};
+
+function nextId(){ return 't'+(autoIdCounter++); }
+
+function sectionColor(section){
+  if(!(section in sectionColorMap)){
+    sectionColorMap[section] = SECTION_COLORS[Object.keys(sectionColorMap).length % SECTION_COLORS.length];
+  }
+  return sectionColorMap[section];
+}
+
+// ---------- date helpers (UTC-safe) ----------
+function toDate(iso){ const [y,m,d]=iso.split('-').map(Number); return new Date(Date.UTC(y,m-1,d)); }
+function fromDate(dt){ return dt.toISOString().slice(0,10); }
+function addDays(iso,n){ const dt=toDate(iso); dt.setUTCDate(dt.getUTCDate()+n); return fromDate(dt); }
+function diffDays(a,b){ return Math.round((toDate(b)-toDate(a))/86400000); }
+function todayISO(){ const n=new Date(); return fromDate(new Date(Date.UTC(n.getFullYear(),n.getMonth(),n.getDate()))); }
+function isValidISO(s){ return /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function escXml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;'); }
+
+// ---------- schedule resolution (handles "after" dependencies) ----------
+function resolveSchedule(){
+  const byId = {};
+  state.tasks.forEach(t=>byId[t.id]=t);
+  state.tasks.forEach(t=>{
+    t.computedStart = (t.deps.length===0 && isValidISO(t.start)) ? t.start : null;
+  });
+  for(let pass=0; pass<8; pass++){
+    let changed=false;
+    for(const t of state.tasks){
+      if(t.computedStart) continue;
+      if(t.deps.length===0){
+        t.computedStart = isValidISO(t.start) ? t.start : todayISO();
+        changed=true; continue;
+      }
+      const depDates = t.deps.map(dep=>{
+        const d = byId[dep.id];
+        if(!d || !d.computedStart) return null;
+        return addDays(d.computedStart, Math.max(d.duration,0) + (dep.lag||0));
+      });
+      if(depDates.length && depDates.every(x=>x)){
+        t.computedStart = depDates.reduce((a,b)=> a>b?a:b);
+        changed=true;
+      }
+    }
+    if(!changed) break;
+  }
+  state.tasks.forEach(t=>{ if(!t.computedStart) t.computedStart = isValidISO(t.start)?t.start:todayISO(); });
+}
+
+function groupedTasks(){
+  const order=[], map={};
+  state.tasks.forEach(t=>{
+    const s = t.section || '未分類';
+    if(!map[s]){ map[s]=[]; order.push(s); }
+    map[s].push(t);
+  });
+  return order.map(s=>({section:s, tasks:map[s]}));
+}
+
+// ---------- render: task editor cards ----------
+function renderCards(){
+  const host = document.getElementById('cards');
+  host.innerHTML = '';
+  const existingSections = [...new Set(state.tasks.map(t=>t.section).filter(Boolean))];
+  state.tasks.forEach((t, idx)=>{
+    const card = document.createElement('div');
+    card.className = 'card';
+    const depsAllowed = state.tasks.filter(o=>o.id!==t.id).map(o=>o.id).join(', ');
+    card.innerHTML = `
+      <button class="del" title="削除" data-act="del" data-idx="${idx}">×</button>
+      <div class="row">
+        <div style="width:100%">
+          <label>タスク名</label>
+          <input data-act="name" data-idx="${idx}" value="${escXml(t.name)}">
+        </div>
+      </div>
+      <div class="row">
+        <div class="w2">
+          <label>セクション</label>
+          <input data-act="section" data-idx="${idx}" value="${escXml(t.section)}" list="sectionList">
+        </div>
+        <div class="w1">
+          <label>ID</label>
+          <input data-act="id" data-idx="${idx}" value="${escXml(t.id)}">
+        </div>
+      </div>
+      <div class="row">
+        <div class="w1">
+          <label>状態</label>
+          <select data-act="status" data-idx="${idx}">
+            ${STATUS_OPTIONS.map(([v,l])=>`<option value="${v}" ${t.status===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <div class="w2">
+          <label>依存タスク(例: t1, t2+3)</label>
+          <input data-act="deps" data-idx="${idx}" value="${escXml(depsToText(t.deps))}" placeholder="例: ${depsAllowed.split(',')[0]?.trim()||'t1'}+2">
+        </div>
+      </div>
+      <div class="row">
+        <div class="w1">
+          <label>開始日${t.deps.length?'(自動)':''}</label>
+          <input type="date" data-act="start" data-idx="${idx}" value="${t.deps.length? t.computedStart : t.start}" ${t.deps.length?'disabled':''}>
+        </div>
+        <div class="w1">
+          <label>期間(日)</label>
+          <input type="number" min="0" data-act="duration" data-idx="${idx}" value="${t.status==='milestone'?0:t.duration}" ${t.status==='milestone'?'disabled':''}>
+        </div>
+      </div>
+    `;
+    host.appendChild(card);
+  });
+  let dl = document.getElementById('sectionList');
+  if(!dl){ dl=document.createElement('datalist'); dl.id='sectionList'; document.body.appendChild(dl); }
+  dl.innerHTML = existingSections.map(s=>`<option value="${escXml(s)}">`).join('');
+
+  host.querySelectorAll('[data-act]').forEach(el=>{
+    el.addEventListener('input', onFieldChange);
+    el.addEventListener('change', onFieldChange);
+  });
+  host.querySelectorAll('[data-act=del]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      state.tasks.splice(+el.dataset.idx,1);
+      renderAll();
+    });
+  });
+}
+
+// "t1, t2+3, t4-1" <-> [{id:'t1',lag:0},{id:'t2',lag:3},{id:'t4',lag:-1}]
+function depsToText(deps){
+  return deps.map(d => d.lag ? `${d.id}${d.lag>0?'+':''}${d.lag}` : d.id).join(', ');
+}
+function textToDeps(text){
+  return text.split(',').map(s=>s.trim()).filter(Boolean).map(tok=>{
+    const m = tok.match(/^([^\s+-]+)\s*([+-]\d+)?$/);
+    if(!m) return {id:tok, lag:0};
+    return {id:m[1], lag: m[2]? parseInt(m[2]) : 0};
+  });
+}
+
+function onFieldChange(e){
+  const idx = +e.target.dataset.idx;
+  const act = e.target.dataset.act;
+  const t = state.tasks[idx];
+  if(!t) return;
+  if(act==='name') t.name = e.target.value;
+  else if(act==='section') t.section = e.target.value;
+  else if(act==='id') t.id = e.target.value.trim() || t.id;
+  else if(act==='status') t.status = e.target.value;
+  else if(act==='deps') t.deps = textToDeps(e.target.value);
+  else if(act==='start') t.start = e.target.value;
+  else if(act==='duration') t.duration = Math.max(0, parseInt(e.target.value)||0);
+  renderAll();
+}
+
+function addTask(){
+  state.tasks.push({id:nextId(), name:'新しいタスク', section: state.tasks.length? state.tasks[state.tasks.length-1].section : '未分類', start: todayISO(), duration:3, status:'', deps:[]});
+  renderAll();
+}
+
+// ---------- render: SVG chart ----------
+let selectedIds = new Set();
+let CURRENT = null;         // {minD, dayW, nameColW, rowH, headerH}
+let taskGroupEls = {};      // id -> <g> element (whole task visual, moved via transform)
+let taskBarEls = {};        // id -> bar rect or milestone polygon (resized/highlighted)
+let taskHandleEls = {};     // id -> resize handle rect (non-milestone only)
+
+function renderChart(){
+  resolveSchedule();
+  const rowH=32, headerH=44, nameColW=190, dayW=26;
+  const groups = groupedTasks();
+  // drop selection ids that no longer exist
+  selectedIds = new Set([...selectedIds].filter(id=>state.tasks.some(t=>t.id===id)));
+  if(state.tasks.length===0){
+    document.getElementById('chartHost').innerHTML = '<p style="color:var(--soft);font-size:13px;">タスクがありません。左のパネルから追加してください。</p>';
+    document.getElementById('legend').innerHTML='';
+    taskGroupEls={}; taskBarEls={}; taskHandleEls={};
+    return;
+  }
+  let minD = state.tasks.reduce((m,t)=> (!m||t.computedStart<m)?t.computedStart:m, null);
+  let maxD = state.tasks.reduce((m,t)=>{ const e=addDays(t.computedStart, Math.max(t.duration,1)); return (!m||e>m)?e:m; }, null);
+  minD = addDays(minD,-2); maxD = addDays(maxD,2);
+  const totalDays = diffDays(minD,maxD);
+  const bodyRows = groups.reduce((n,g)=>n+g.tasks.length+1,0);
+  const chartW = nameColW + totalDays*dayW + 20;
+  const chartH = headerH + bodyRows*rowH + 10;
+  const todayX = nameColW + diffDays(minD, todayISO())*dayW;
+  CURRENT = {minD, dayW, nameColW, rowH, headerH};
+
+  let svg = `<svg class="mono" width="${chartW}" height="${chartH}" viewBox="0 0 ${chartW} ${chartH}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<defs><marker id="depArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8B9088"/></marker></defs>`;
+  svg += `<rect x="0" y="0" width="${chartW}" height="${chartH}" fill="#F7F7F2" data-role="bg"/>`;
+
+  // week gridlines + date labels
+  for(let d=0; d<=totalDays; d+=7){
+    const x = nameColW + d*dayW;
+    const label = addDays(minD,d).slice(5);
+    svg += `<line x1="${x}" y1="${headerH}" x2="${x}" y2="${chartH-6}" stroke="#CCCFC3" stroke-width="1"/>`;
+    svg += `<text class="mono-text" x="${x+4}" y="${headerH-14}" font-size="11" fill="#5B655F">${label}</text>`;
+  }
+  svg += `<line x1="${nameColW}" y1="${headerH}" x2="${chartW-10}" y2="${headerH}" stroke="#1F2A26" stroke-width="1"/>`;
+  // today marker
+  if(todayX >= nameColW && todayX <= chartW-10){
+    svg += `<line x1="${todayX}" y1="${headerH}" x2="${todayX}" y2="${chartH-6}" stroke="#C1572B" stroke-width="1.5" stroke-dasharray="3,3"/>`;
+    svg += `<text class="mono-text" x="${todayX+3}" y="${headerH-2}" font-size="10" fill="#C1572B">今日</text>`;
+  }
+
+  let y = headerH + 6;
+  const posMap = {};
+  groups.forEach(g=>{
+    const color = sectionColor(g.section);
+    svg += `<rect x="0" y="${y-2}" width="${chartW}" height="${rowH-4}" fill="#EDEEE7" data-role="bg"/>`;
+    svg += `<text x="8" y="${y+rowH/2-2}" font-size="12.5" font-weight="600" fill="#1F2A26">${escXml(g.section)}</text>`;
+    y += rowH;
+    g.tasks.forEach(t=>{
+      const x = nameColW + diffDays(minD, t.computedStart)*dayW;
+      const w = Math.max(t.duration,1)*dayW;
+      const isSel = selectedIds.has(t.id);
+      const idAttr = escXml(t.id);
+      svg += `<text x="12" y="${y+rowH/2+3}" font-size="12" fill="#1F2A26">${escXml(t.name)}</text>`;
+      svg += `<g data-task-id="${idAttr}" transform="translate(0,0)">`;
+      if(t.status==='milestone'){
+        const cx=x, cy=y+rowH/2;
+        posMap[t.id] = {xStart:cx-9, xEnd:cx+9, y:cy};
+        svg += `<polygon class="milestone-shape${isSel?' selected':''}" data-task-id="${idAttr}" data-role="milestone" points="${cx},${cy-9} ${cx+9},${cy} ${cx},${cy+9} ${cx-9},${cy}" fill="${color}" stroke="#1F2A26" stroke-width="1"/>`;
+        svg += `<text class="mono-text" x="${cx+14}" y="${cy+4}" font-size="10.5" fill="#5B655F">${t.computedStart}</text>`;
+        svg += `<circle class="connector-handle" data-role="connector" data-task-id="${idAttr}" cx="${cx+22}" cy="${cy}" r="5"/>`;
+      } else {
+        const opacity = t.status==='done' ? 0.45 : 1;
+        const stroke = t.status==='crit' ? '#B23A2E' : '#1F2A26';
+        const rowCenter = y + rowH/2;
+        posMap[t.id] = {xStart:x, xEnd:x+w, y:rowCenter};
+        svg += `<rect class="taskbar${isSel?' selected':''}" data-task-id="${idAttr}" data-role="bar" x="${x}" y="${y+5}" width="${w}" height="${rowH-14}" rx="3" fill="${color}" fill-opacity="${opacity}" stroke="${stroke}" stroke-width="1"/>`;
+        if(w>34) svg += `<text class="mono-text" data-role="bar" data-task-id="${idAttr}" x="${x+6}" y="${y+rowH/2+3}" font-size="10" fill="#fff" style="pointer-events:none">${t.duration}d</text>`;
+        svg += `<rect class="resize-handle" data-task-id="${idAttr}" data-role="handle" x="${x+w-6}" y="${y+5}" width="6" height="${rowH-14}" fill="transparent"/>`;
+        svg += `<circle class="connector-handle" data-role="connector" data-task-id="${idAttr}" cx="${x+w+9}" cy="${rowCenter}" r="5"/>`;
+      }
+      svg += `</g>`;
+      y += rowH;
+    });
+  });
+
+  // dependency arrows + delete buttons
+  state.tasks.forEach(t=>{
+    t.deps.forEach(dep=>{
+      const depId = dep.id;
+      const p = posMap[depId], q = posMap[t.id];
+      if(!p || !q) return;
+      const x1=p.xEnd, y1=p.y, x2=q.xStart, y2=q.y;
+      const midX = (x1+x2)/2;
+      svg += `<path d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" fill="none" stroke="#8B9088" stroke-width="1.5" marker-end="url(#depArrow)" pointer-events="none"/>`;
+      const mx=(x1+x2)/2, my=(y1+y2)/2;
+      svg += `<g class="dep-delete-btn" data-role="dep-delete" data-from="${escXml(depId)}" data-to="${escXml(t.id)}">`
+           + `<circle cx="${mx}" cy="${my}" r="7" fill="#F7F7F2" stroke="#8B9088" stroke-width="1"/>`
+           + `<text x="${mx}" y="${my+3}" font-size="10" text-anchor="middle" fill="#8B9088">×</text>`
+           + (dep.lag ? `<text x="${mx}" y="${my-11}" font-size="10" text-anchor="middle" fill="#5B655F" class="mono-text">${dep.lag>0?'+':''}${dep.lag}d</text>` : '')
+           + `</g>`;
+    });
+  });
+  svg += `</svg>`;
+  document.getElementById('chartHost').innerHTML = svg;
+
+  taskGroupEls={}; taskBarEls={}; taskHandleEls={};
+  document.querySelectorAll('#chartHost g[data-task-id]').forEach(g=>{
+    taskGroupEls[g.getAttribute('data-task-id')] = g;
+  });
+  document.querySelectorAll('#chartHost [data-role="bar"], #chartHost [data-role="milestone"]').forEach(el=>{
+    if(el.tagName.toLowerCase()!=='text') taskBarEls[el.getAttribute('data-task-id')] = el;
+  });
+  document.querySelectorAll('#chartHost [data-role="handle"]').forEach(el=>{
+    taskHandleEls[el.getAttribute('data-task-id')] = el;
+  });
+
+  document.getElementById('legend').innerHTML = groups.map(g=>
+    `<span><span class="swatch" style="background:${sectionColor(g.section)}"></span>${escXml(g.section)}</span>`
+  ).join('') + `<span><span class="swatch" style="background:#fff;border:1px solid #B23A2E"></span>クリティカル(枠線)</span>`
+    + `<span><span class="swatch" style="background:#999;opacity:.45"></span>完了(半透明)</span>`
+    + `<span><span class="swatch" style="background:#fff;border:2px dashed #2F6FBD"></span>選択中</span>`;
+}
+
+// ---------- chart drag interactions ----------
+function onChartMouseDown(e){
+  const target = e.target.closest('[data-role]');
+  const role = target ? target.dataset.role : null;
+  const taskId = target ? target.dataset.taskId : null;
+
+  if(role==='dep-delete'){
+    e.preventDefault(); e.stopPropagation();
+    removeDependency(target.dataset.from, target.dataset.to);
+    renderAll();
+    return;
+  }
+  if(role==='connector' && taskId){
+    e.preventDefault(); e.stopPropagation();
+    startLinkDrag(e, taskId);
+    return;
+  }
+  if(role==='handle' && taskId){
+    e.preventDefault();
+    startResizeDrag(e, taskId);
+    return;
+  }
+  if((role==='bar' || role==='milestone') && taskId){
+    e.preventDefault();
+    if(e.shiftKey){
+      if(selectedIds.has(taskId)) selectedIds.delete(taskId); else selectedIds.add(taskId);
+      renderChart();
+      return;
+    }
+    if(!selectedIds.has(taskId) || selectedIds.size<=1){
+      selectedIds = new Set([taskId]);
+      renderChart();
+    }
+    startMoveDrag(e, Array.from(selectedIds));
+    return;
+  }
+  // clicked empty space: clear selection
+  if(selectedIds.size){ selectedIds.clear(); renderChart(); }
+}
+
+// ---------- dependency editing (GUI) ----------
+function wouldCreateCycle(sourceId, targetId){
+  // new edge: sourceId is a predecessor of targetId. Cycle if targetId can already
+  // reach sourceId by following existing "X depends on Y" edges forward from targetId.
+  const visited = new Set();
+  const stack = [targetId];
+  function dependents(id){ return state.tasks.filter(t=>t.deps.some(d=>d.id===id)).map(t=>t.id); }
+  while(stack.length){
+    const cur = stack.pop();
+    if(cur===sourceId) return true;
+    if(visited.has(cur)) continue;
+    visited.add(cur);
+    dependents(cur).forEach(d=>stack.push(d));
+  }
+  return false;
+}
+function addDependency(sourceId, targetId){
+  if(sourceId===targetId) return;
+  const source = state.tasks.find(t=>t.id===sourceId);
+  const target = state.tasks.find(t=>t.id===targetId);
+  if(!source || !target) return;
+  if(target.deps.some(d=>d.id===sourceId)){ setStatus('すでに依存関係が設定されています。', true); return; }
+  if(wouldCreateCycle(sourceId, targetId)){ setStatus('循環した依存関係になるため設定できません。', true); return; }
+  target.deps.push({id:sourceId, lag:0});
+  target.start = '';
+  setStatus(`「${source.name}」→「${target.name}」の依存関係を設定しました。`);
+}
+function removeDependency(fromId, toId){
+  const target = state.tasks.find(t=>t.id===toId);
+  if(!target) return;
+  const before = target.deps.length;
+  target.deps = target.deps.filter(d=>d.id!==fromId);
+  if(target.deps.length!==before){
+    if(target.deps.length===0) target.start = target.computedStart;
+    setStatus('依存関係を解除しました。');
+  }
+}
+function clientToSvgPoint(clientX, clientY, svg){
+  const rect = svg.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  const scaleX = (vb && vb.width && rect.width) ? vb.width/rect.width : 1;
+  const scaleY = (vb && vb.height && rect.height) ? vb.height/rect.height : 1;
+  return { x: (clientX-rect.left)*scaleX, y: (clientY-rect.top)*scaleY };
+}
+function startLinkDrag(e, sourceId){
+  const svg = document.querySelector('#chartHost svg');
+  if(!svg) return;
+  const start = clientToSvgPoint(e.clientX, e.clientY, svg);
+  const tempLine = document.createElementNS('http://www.w3.org/2000/svg','line');
+  tempLine.setAttribute('x1', start.x); tempLine.setAttribute('y1', start.y);
+  tempLine.setAttribute('x2', start.x); tempLine.setAttribute('y2', start.y);
+  tempLine.setAttribute('stroke', '#2F6FBD');
+  tempLine.setAttribute('stroke-width', '2');
+  tempLine.setAttribute('stroke-dasharray', '4,3');
+  tempLine.setAttribute('pointer-events', 'none');
+  svg.appendChild(tempLine);
+  document.body.classList.add('dragging-link');
+  function onMove(ev){
+    const p = clientToSvgPoint(ev.clientX, ev.clientY, svg);
+    tempLine.setAttribute('x2', p.x); tempLine.setAttribute('y2', p.y);
+  }
+  function onUp(ev){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('dragging-link');
+    tempLine.remove();
+    const dropEl = document.elementFromPoint(ev.clientX, ev.clientY);
+    const dropTarget = dropEl ? dropEl.closest('[data-role]') : null;
+    if(dropTarget && (dropTarget.dataset.role==='bar' || dropTarget.dataset.role==='milestone')){
+      addDependency(sourceId, dropTarget.dataset.taskId);
+    }
+    renderAll();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+function startMoveDrag(e, ids){
+  const startClientX = e.clientX;
+  const dayW = CURRENT.dayW;
+  const els = ids.map(id=>taskGroupEls[id]).filter(Boolean);
+  document.body.classList.add('dragging-move');
+  let lastDx = 0;
+  function onMove(ev){
+    lastDx = ev.clientX - startClientX;
+    els.forEach(g=>g.setAttribute('transform', `translate(${lastDx},0)`));
+  }
+  function onUp(){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('dragging-move');
+    const dayDelta = Math.round(lastDx/dayW);
+    if(dayDelta!==0){
+      const idSet = new Set(ids);
+      ids.forEach(id=>{
+        const t = state.tasks.find(x=>x.id===id);
+        if(!t) return;
+        if(t.deps.length===0){
+          t.start = addDays(t.computedStart, dayDelta);
+        } else {
+          // keep the dependency links; just widen/narrow the gap (lag).
+          // if the predecessor is also being dragged along, it already shifts
+          // by the same amount, so no lag change is needed for that link.
+          t.deps.forEach(dep=>{
+            if(!idSet.has(dep.id)) dep.lag = (dep.lag||0) + dayDelta;
+          });
+        }
+      });
+      setStatus(ids.length>1
+        ? `${ids.length}件のタスクの開始日をまとめて変更しました（依存関係は維持され、間隔が調整されました）。`
+        : '開始日を変更しました（依存関係は維持され、間隔が調整されました）。');
+    }
+    renderAll();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+function startResizeDrag(e, taskId){
+  const t = state.tasks.find(x=>x.id===taskId);
+  const bar = taskBarEls[taskId];
+  if(!t || !bar) return;
+  const handle = taskHandleEls[taskId];
+  const startClientX = e.clientX;
+  const dayW = CURRENT.dayW;
+  const origWidth = parseFloat(bar.getAttribute('width'));
+  const origX = parseFloat(bar.getAttribute('x'));
+  document.body.classList.add('dragging-resize');
+  let lastDx = 0;
+  function onMove(ev){
+    lastDx = ev.clientX - startClientX;
+    const newW = Math.max(dayW*0.4, origWidth + lastDx);
+    bar.setAttribute('width', newW);
+    if(handle) handle.setAttribute('x', origX + newW - 6);
+  }
+  function onUp(){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('dragging-resize');
+    const dayDelta = Math.round(lastDx/dayW);
+    const newDuration = Math.max(0, t.duration + dayDelta);
+    if(newDuration !== t.duration){
+      t.duration = newDuration;
+      setStatus(`「${t.name}」の期間を${newDuration}日に変更しました。`);
+    }
+    renderAll();
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+document.getElementById('chartHost').addEventListener('mousedown', onChartMouseDown);
+
+function renderAll(){
+  document.getElementById('titleInput').value = state.title;
+  renderCards();
+  renderChart();
+}
+
+// ---------- Mermaid export ----------
+// NOTE: Mermaid's gantt syntax has no concept of a lag/gap on "after" links.
+// When every dependency has lag 0 we still emit "after id1 id2" (fully round-trippable).
+// When a dependency has a non-zero lag we fall back to an explicit date so the exported
+// file renders with the correct dates in any Mermaid viewer, and add a comment documenting
+// the relationship + gap for reference (re-importing that task will lose the link itself).
+//
+// Colors: Mermaid assigns each *section* (in first-appearance order) a numeric class
+// suffix (task0/active0/done0/crit0 for the 1st section, task1/... for the 2nd, etc, up
+// to config.gantt.numberSectionStyles before it cycles). We emit a %%{init: ...}%%
+// directive with numberSectionStyles set to our section count and a themeCSS block that
+// paints each of those classes with the same color this app uses for that section, so the
+// exported file reproduces our section colors (including a dimmed look for "done" and a
+// red outline for "crit") in any standard Mermaid renderer. Verified against mermaid 12.
+function mermaidColorDirective(groups){
+  if(groups.length===0) return null;
+  const rules = [];
+  groups.forEach((g,i)=>{
+    const color = getCssColor(g.section);
+    rules.push(`.task${i}{fill:${color} !important;}`);
+    rules.push(`.active${i}{fill:${color} !important;}`);
+    rules.push(`.done${i}{fill:${color} !important;fill-opacity:0.45 !important;}`);
+    rules.push(`.crit${i}{fill:${color} !important;stroke:#B23A2E !important;stroke-width:2px !important;}`);
+  });
+  const css = rules.join(' ').replace(/"/g, '\\"');
+  return `%%{init: {'gantt': {'numberSectionStyles': ${groups.length}}, 'themeCSS': "${css}"} }%%`;
+}
+function toMermaid(){
+  resolveSchedule();
+  const groups = groupedTasks();
+  const lines = [];
+  const directive = mermaidColorDirective(groups);
+  if(directive) lines.push(directive);
+  lines.push('gantt', `    title ${state.title||''}`, '    dateFormat  YYYY-MM-DD');
+  groups.forEach(({section, tasks})=>{
+    lines.push(`    section ${section}`);
+    tasks.forEach(t=>{
+      const hasLag = t.deps.some(d=>d.lag);
+      const attrs = [];
+      if(t.status) attrs.push(t.status);
+      attrs.push(t.id);
+      if(t.deps.length && !hasLag) attrs.push('after ' + t.deps.map(d=>d.id).join(' '));
+      else attrs.push(t.computedStart);
+      attrs.push((t.status==='milestone' ? 0 : t.duration) + 'd');
+      lines.push(`    ${t.name} :${attrs.join(', ')}`);
+      if(hasLag){
+        const note = t.deps.map(d=> d.lag ? `${d.id}(${d.lag>0?'+':''}${d.lag}d)` : d.id).join(', ');
+        lines.push(`    %% depends on: ${note}`);
+      }
+    });
+  });
+  return lines.join('\n');
+}
+
+// ---------- Mermaid import ----------
+function parseDurationToken(tok){
+  if(/^\d+d$/i.test(tok)) return parseInt(tok);
+  if(/^\d+w$/i.test(tok)) return parseInt(tok)*7;
+  const n = parseInt(tok);
+  return isNaN(n) ? 1 : n;
+}
+function parseMermaidText(text){
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l && !l.startsWith('%%'));
+  const statusSet = ['active','done','crit','milestone'];
+  let title='', section='未分類';
+  const tasks=[];
+  let counter=1;
+  for(const line of lines){
+    if(/^gantt\b/i.test(line)) continue;
+    if(/^title\s+/i.test(line)){ title = line.replace(/^title\s+/i,'').trim(); continue; }
+    if(/^dateFormat\b/i.test(line)) continue;
+    if(/^excludes\b/i.test(line)) continue;
+    if(/^axisFormat\b/i.test(line)) continue;
+    if(/^todayMarker\b/i.test(line)) continue;
+    if(/^section\s+/i.test(line)){ section = line.replace(/^section\s+/i,'').trim(); continue; }
+    const m = line.match(/^(.*?)\s*:\s*(.*)$/);
+    if(!m) continue;
+    const name = m[1].trim();
+    const tokens = m[2].split(',').map(s=>s.trim()).filter(Boolean);
+    let status='';
+    const rest=[];
+    tokens.forEach(tk=>{
+      if(statusSet.includes(tk.toLowerCase())) status = tk.toLowerCase();
+      else rest.push(tk);
+    });
+    let id='', startTok='', durTok='';
+    if(rest.length>=3){ id=rest[0]; startTok=rest[1]; durTok=rest[2]; }
+    else if(rest.length===2){ id='t_'+(counter++); startTok=rest[0]; durTok=rest[1]; }
+    else if(rest.length===1){ id='t_'+(counter++); startTok=rest[0]; durTok='0d'; }
+    else { continue; }
+    let deps=[];
+    if(/^after\s+/i.test(startTok)){ deps = startTok.replace(/^after\s+/i,'').split(/\s+/).map(id=>({id, lag:0})); startTok=''; }
+    tasks.push({
+      id: id||('t_'+(counter++)),
+      name, section,
+      start: isValidISO(startTok) ? startTok : '',
+      duration: durTok ? parseDurationToken(durTok) : 1,
+      status, deps
+    });
+  }
+  return {title, tasks};
+}
+
+// ---------- draw.io export ----------
+function toDrawio(){
+  resolveSchedule();
+  const rowH=32, headerH=40, nameColW=200, dayW=26;
+  const groups = groupedTasks();
+  let minD = state.tasks.reduce((m,t)=>(!m||t.computedStart<m)?t.computedStart:m, null) || todayISO();
+  let maxD = state.tasks.reduce((m,t)=>{ const e=addDays(t.computedStart, Math.max(t.duration,1)); return (!m||e>m)?e:m; }, null) || addDays(minD,7);
+  minD = addDays(minD,-1); maxD = addDays(maxD,1);
+  const totalDays = diffDays(minD,maxD);
+  let n=0; const nid=()=>'c'+(n++);
+  const totalRows = groups.reduce((s,g)=>s+g.tasks.length+1,0);
+  const bottomY = headerH + totalRows*rowH;
+  const cells=[];
+  for(let d=0; d<=totalDays; d+=7){
+    const x = nameColW + d*dayW;
+    const label = addDays(minD,d);
+    cells.push(`<mxCell id="${nid()}" value="${escXml(label)}" style="text;html=1;align=left;fontFamily=Courier New;fontSize=10;fontColor=#5B655F;" vertex="1" parent="1"><mxGeometry x="${x}" y="8" width="80" height="20" as="geometry"/></mxCell>`);
+    cells.push(`<mxCell id="${nid()}" style="endArrow=none;strokeColor=#CCCFC3;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="${x}" y="${headerH}" as="sourcePoint"/><mxPoint x="${x}" y="${bottomY}" as="targetPoint"/></mxGeometry></mxCell>`);
+  }
+  let y = headerH;
+  groups.forEach(g=>{
+    const color = sectionColor(g.section).replace('var(--','#').replace(')','');
+    const realColor = getCssColor(g.section);
+    cells.push(`<mxCell id="${nid()}" value="${escXml(g.section)}" style="text;html=1;fontStyle=1;fontFamily=IBM Plex Sans JP;fontSize=12;fontColor=#1F2A26;" vertex="1" parent="1"><mxGeometry x="0" y="${y}" width="${nameColW}" height="${rowH}" as="geometry"/></mxCell>`);
+    y += rowH;
+    g.tasks.forEach(t=>{
+      const x = nameColW + diffDays(minD, t.computedStart)*dayW;
+      const w = Math.max(t.duration,1)*dayW;
+      const depsAttr = t.deps.map(d=>`${d.id}:${d.lag||0}`).join(',');
+      cells.push(`<mxCell id="${nid()}" value="${escXml(t.name)}" style="text;html=1;fontFamily=IBM Plex Sans JP;fontSize=11;fontColor=#1F2A26;" vertex="1" parent="1"><mxGeometry x="14" y="${y}" width="${nameColW-18}" height="${rowH}" as="geometry"/></mxCell>`);
+      const objId = 'task-' + t.id.replace(/[^a-zA-Z0-9_-]/g,'_');
+      if(t.status==='milestone'){
+        cells.push(`<object label="${escXml(t.name)}" ganttId="${escXml(t.id)}" ganttStart="${t.computedStart}" ganttDuration="0" ganttSection="${escXml(g.section)}" ganttStatus="milestone" ganttDeps="${escXml(depsAttr)}" id="${objId}"><mxCell style="rhombus;whiteSpace=wrap;html=1;fillColor=${realColor};strokeColor=#1F2A26;" vertex="1" parent="1"><mxGeometry x="${x-9}" y="${y+4}" width="24" height="24" as="geometry"/></mxCell></object>`);
+      } else {
+        const opacity = t.status==='done' ? '45' : '100';
+        const stroke = t.status==='crit' ? '#B23A2E' : '#1F2A26';
+        cells.push(`<object label="${escXml(t.name)}" ganttId="${escXml(t.id)}" ganttStart="${t.computedStart}" ganttDuration="${t.duration}" ganttSection="${escXml(g.section)}" ganttStatus="${t.status}" ganttDeps="${escXml(depsAttr)}" id="${objId}"><mxCell style="rounded=1;whiteSpace=wrap;html=1;fillColor=${realColor};strokeColor=${stroke};opacity=${opacity};arcSize=25;fontColor=#ffffff;fontSize=10;" vertex="1" parent="1"><mxGeometry x="${x}" y="${y+5}" width="${w}" height="${rowH-12}" as="geometry"/></mxCell></object>`);
+      }
+      y += rowH;
+    });
+  });
+  return `<mxfile host="app.diagrams.net"><diagram name="${escXml(state.title||'Gantt')}" id="ganttDiagram"><mxGraphModel dx="900" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells.join('')}</root></mxGraphModel></diagram></mxfile>`;
+}
+const RESOLVED_COLORS = ['#3D6A72','#7A8F52','#8C6B3F','#5B6E9A','#96536B','#4F7A50'];
+function getCssColor(section){
+  sectionColor(section); // ensure mapped
+  const idx = Object.keys(sectionColorMap).indexOf(section);
+  return RESOLVED_COLORS[idx % RESOLVED_COLORS.length];
+}
+
+// ---------- draw.io import ----------
+function parseDrawioText(text){
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if(doc.querySelector('parsererror')) throw new Error('XMLの解析に失敗しました。ファイルが破損している可能性があります。');
+  const objs = Array.from(doc.querySelectorAll('object[ganttStart]'));
+  if(objs.length===0){
+    throw new Error('ガントチャート用のメタデータが見つかりませんでした。このアプリで書き出したdraw.ioファイルのみ完全に読み込めます。');
+  }
+  const tasks = objs.map(o=>({
+    id: o.getAttribute('ganttId') || o.getAttribute('id'),
+    name: o.getAttribute('label') || '',
+    section: o.getAttribute('ganttSection') || '未分類',
+    start: o.getAttribute('ganttStart') || todayISO(),
+    duration: parseInt(o.getAttribute('ganttDuration')||'1') || 0,
+    status: o.getAttribute('ganttStatus') || '',
+    deps: (o.getAttribute('ganttDeps')||'').split(',').map(s=>s.trim()).filter(Boolean).map(tok=>{
+      const [id, lag] = tok.split(':');
+      return {id, lag: parseInt(lag)||0};
+    })
+  }));
+  const title = doc.querySelector('diagram')?.getAttribute('name') || '';
+  return {title, tasks};
+}
+
+// ---------- file helpers ----------
+function download(filename, content, mime){
+  const blob = new Blob([content], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function setStatus(msg, isError){
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+}
+function readFile(file, cb){
+  const reader = new FileReader();
+  reader.onload = ()=>cb(reader.result);
+  reader.onerror = ()=>setStatus('ファイルの読み込みに失敗しました。', true);
+  reader.readAsText(file);
+}
+
+// ---------- wiring ----------
+document.getElementById('titleInput').addEventListener('input', e=>{ state.title = e.target.value; });
+document.getElementById('addTaskBtn').addEventListener('click', addTask);
+document.getElementById('addTaskTop').addEventListener('click', addTask);
+
+document.getElementById('exportMermaidBtn').addEventListener('click', ()=>{
+  download((state.title||'gantt')+'.mmd', toMermaid(), 'text/plain');
+  setStatus('Mermaidファイルを書き出しました。');
+});
+document.getElementById('exportDrawioBtn').addEventListener('click', ()=>{
+  download((state.title||'gantt')+'.drawio', toDrawio(), 'application/xml');
+  setStatus('draw.ioファイル(.drawio)を書き出しました。app.diagrams.netやdraw.ioデスクトップ版で開けます。');
+});
+document.getElementById('importMermaidFile').addEventListener('change', e=>{
+  const file = e.target.files[0]; if(!file) return;
+  readFile(file, text=>{
+    try{
+      const parsed = parseMermaidText(text);
+      state.title = parsed.title || state.title;
+      state.tasks = parsed.tasks;
+      autoIdCounter = 1000;
+      Object.keys(sectionColorMap).forEach(k=>delete sectionColorMap[k]);
+      renderAll();
+      setStatus(`Mermaidファイルから ${parsed.tasks.length} 件のタスクを読み込みました。`);
+    }catch(err){ setStatus('読み込みエラー: '+err.message, true); }
+  });
+  e.target.value='';
+});
+document.getElementById('importDrawioFile').addEventListener('change', e=>{
+  const file = e.target.files[0]; if(!file) return;
+  readFile(file, text=>{
+    try{
+      const parsed = parseDrawioText(text);
+      state.title = parsed.title || state.title;
+      state.tasks = parsed.tasks;
+      autoIdCounter = 1000;
+      Object.keys(sectionColorMap).forEach(k=>delete sectionColorMap[k]);
+      renderAll();
+      setStatus(`draw.ioファイルから ${parsed.tasks.length} 件のタスクを読み込みました。`);
+    }catch(err){ setStatus('読み込みエラー: '+err.message, true); }
+  });
+  e.target.value='';
+});
+
+renderAll();
+</script>
+</body>
+</html>
