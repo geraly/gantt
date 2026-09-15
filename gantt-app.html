@@ -50,7 +50,7 @@
   input[type=file]{display:none;}
   main{display:flex; align-items:flex-start;}
   #taskPanel{
-    width:340px; min-width:340px; padding:16px; border-right:1px solid var(--line);
+    width:400px; min-width:400px; padding:16px; border-right:1px solid var(--line);
     height:calc(100vh - 66px); overflow-y:auto;
   }
   #taskPanel h2{font-size:12px; text-transform:none; color:var(--soft); margin:0 0 10px; font-weight:600;}
@@ -63,7 +63,9 @@
   .card input, .card select{
     width:100%; font-size:12.5px; padding:5px 6px; border:1px solid var(--grid);
     border-radius:2px; font-family:inherit; background:#fff; color:var(--ink);
+    box-sizing:border-box;
   }
+  .card input[type="date"]{min-width:0; width:100%;}
   .card input:disabled{background:#EEEEE7; color:var(--soft);}
   .card .del{
     position:absolute; top:6px; right:6px; border:none; background:none; color:var(--soft);
@@ -92,6 +94,9 @@
   .dep-delete-btn:hover circle{fill:#FCE8E6; stroke:#B23A2E;}
   .dep-delete-btn:hover text{fill:#B23A2E;}
   body.dragging-link *{cursor:crosshair !important;}
+  .holiday-chip{display:inline-flex; align-items:center; gap:4px; background:#F3D9D3; border:1px solid #C1572B; border-radius:10px; padding:2px 8px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:#8A3A1F;}
+  .holiday-chip button{border:none; background:none; padding:0; margin:0; font-size:12px; line-height:1; color:#8A3A1F; cursor:pointer;}
+  .holiday-chip button:hover{color:#B23A2E; background:none;}
   .taskbar.selected, .milestone-shape.selected{stroke:#2F6FBD !important; stroke-width:2.5px !important; stroke-dasharray:4,2;}
   body.dragging-move *{cursor:grabbing !important;}
   body.dragging-resize *{cursor:ew-resize !important;}
@@ -119,7 +124,13 @@
     <button id="addTaskBtn">+ タスクを追加</button>
   </div>
   <div id="chartWrap">
-    <p id="chartHint">バーをドラッグして開始日を変更できます（依存関係がある場合は解除されず、間隔=ラグだけ調整されます）。右端のハンドルで期間を変更、バー右の○をドラッグして別のタスクに繋ぐと依存関係を作成、矢印上の×で解除できます。依存タスク欄に「t1+3」のように書くと間隔を直接指定できます。Shift+クリックで複数選択し、まとめてドラッグできます。</p>
+    <p id="chartHint">バーをドラッグして開始日を変更できます（依存関係がある場合は解除されず、間隔=ラグだけ調整されます）。右端のハンドルで期間を変更、バー右の○をドラッグして別のタスクに繋ぐと依存関係を作成、矢印上の×で解除できます。依存タスク欄に「t1+3」のように書くと間隔を直接指定できます。Shift+クリックで複数選択し、まとめてドラッグできます。期間(日数)は稼働日ベースで計算され、土日・登録した休日はスキップされます（開始日が休日に重なった場合も次の稼働日に自動でずれます）。</p>
+    <div id="holidayBar" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12px; color:var(--soft);">
+      <span>休日:</span>
+      <input type="date" id="holidayInput" style="font-family:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--grid); border-radius:2px;">
+      <button id="addHolidayBtn" style="padding:4px 10px; font-size:12px;">追加</button>
+      <div id="holidayChips" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+    </div>
     <div class="legend" id="legend"></div>
     <div id="chartHost"></div>
   </div>
@@ -131,6 +142,7 @@ const STATUS_OPTIONS = [['','通常'],['active','進行中'],['done','完了'],[
 
 let state = {
   title: 'Webサイトリニューアル',
+  holidays: [],
   tasks: [
     {id:'t1', name:'要件定義', section:'企画', start:'2026-09-15', duration:5, status:'done', deps:[]},
     {id:'t2', name:'要件レビュー', section:'企画', start:'', duration:2, status:'done', deps:[{id:'t1', lag:0}]},
@@ -163,33 +175,68 @@ function isValidISO(s){ return /^\d{4}-\d{2}-\d{2}$/.test(s); }
 function escXml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;'); }
 
 // ---------- schedule resolution (handles "after" dependencies) ----------
+// ---------- working-day helpers (weekends + custom holidays) ----------
+function isNonWorkingDay(dateISO){
+  const dow = toDate(dateISO).getUTCDay(); // 0=Sun, 6=Sat
+  return dow===0 || dow===6 || state.holidays.includes(dateISO);
+}
+function nextWorkingDay(dateISO){
+  let d = dateISO;
+  while(isNonWorkingDay(d)) d = addDays(d,1);
+  return d;
+}
+// Steps `n` *working* days forward from dateISO (skipping weekends/holidays),
+// mirroring addDays()'s "exclusive end" convention: addWorkDays(d,0)===d, and the
+// returned date always lands on a working day by construction.
+function addWorkDays(dateISO, n){
+  let d = dateISO, count = 0;
+  while(count < n){ d = addDays(d,1); if(!isNonWorkingDay(d)) count++; }
+  return d;
+}
+
 function resolveSchedule(){
   const byId = {};
   state.tasks.forEach(t=>byId[t.id]=t);
+  function finalize(t){
+    t.computedEnd = addWorkDays(t.computedStart, Math.max(t.duration,0));
+  }
   state.tasks.forEach(t=>{
-    t.computedStart = (t.deps.length===0 && isValidISO(t.start)) ? t.start : null;
+    if(t.deps.length===0 && isValidISO(t.start)){
+      t.computedStart = nextWorkingDay(t.start);
+      finalize(t);
+    } else {
+      t.computedStart = null;
+      t.computedEnd = null;
+    }
   });
   for(let pass=0; pass<8; pass++){
     let changed=false;
     for(const t of state.tasks){
       if(t.computedStart) continue;
       if(t.deps.length===0){
-        t.computedStart = isValidISO(t.start) ? t.start : todayISO();
+        t.computedStart = nextWorkingDay(isValidISO(t.start) ? t.start : todayISO());
+        finalize(t);
         changed=true; continue;
       }
       const depDates = t.deps.map(dep=>{
         const d = byId[dep.id];
-        if(!d || !d.computedStart) return null;
-        return addDays(d.computedStart, Math.max(d.duration,0) + (dep.lag||0));
+        if(!d || !d.computedEnd) return null;
+        return addDays(d.computedEnd, dep.lag||0);
       });
       if(depDates.length && depDates.every(x=>x)){
-        t.computedStart = depDates.reduce((a,b)=> a>b?a:b);
+        t.computedStart = nextWorkingDay(depDates.reduce((a,b)=> a>b?a:b));
+        finalize(t);
         changed=true;
       }
     }
     if(!changed) break;
   }
-  state.tasks.forEach(t=>{ if(!t.computedStart) t.computedStart = isValidISO(t.start)?t.start:todayISO(); });
+  state.tasks.forEach(t=>{
+    if(!t.computedStart){
+      t.computedStart = nextWorkingDay(isValidISO(t.start)?t.start:todayISO());
+      finalize(t);
+    }
+  });
 }
 
 function groupedTasks(){
@@ -242,12 +289,14 @@ function renderCards(){
         </div>
       </div>
       <div class="row">
-        <div class="w1">
+        <div style="width:100%">
           <label>開始日${t.deps.length?'(自動)':''}</label>
           <input type="date" data-act="start" data-idx="${idx}" value="${t.deps.length? t.computedStart : t.start}" ${t.deps.length?'disabled':''}>
         </div>
-        <div class="w1">
-          <label>期間(日)</label>
+      </div>
+      <div class="row">
+        <div style="width:100%">
+          <label>期間(稼働日)</label>
           <input type="number" min="0" data-act="duration" data-idx="${idx}" value="${t.status==='milestone'?0:t.duration}" ${t.status==='milestone'?'disabled':''}>
         </div>
       </div>
@@ -322,7 +371,7 @@ function renderChart(){
     return;
   }
   let minD = state.tasks.reduce((m,t)=> (!m||t.computedStart<m)?t.computedStart:m, null);
-  let maxD = state.tasks.reduce((m,t)=>{ const e=addDays(t.computedStart, Math.max(t.duration,1)); return (!m||e>m)?e:m; }, null);
+  let maxD = state.tasks.reduce((m,t)=>{ const e=t.computedEnd>t.computedStart?t.computedEnd:addDays(t.computedStart,1); return (!m||e>m)?e:m; }, null);
   minD = addDays(minD,-2); maxD = addDays(maxD,2);
   const totalDays = diffDays(minD,maxD);
   const bodyRows = groups.reduce((n,g)=>n+g.tasks.length+1,0);
@@ -335,12 +384,31 @@ function renderChart(){
   svg += `<defs><marker id="depArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8B9088"/></marker></defs>`;
   svg += `<rect x="0" y="0" width="${chartW}" height="${chartH}" fill="#F7F7F2" data-role="bg"/>`;
 
-  // week gridlines + date labels
-  for(let d=0; d<=totalDays; d+=7){
+  // weekend (Sat/Sun) + custom holiday shading, drawn before row bands so the
+  // row bands (semi-transparent) let the tint show through underneath them too.
+  const holidaySet = new Set(state.holidays);
+  for(let d=0; d<totalDays; d++){
+    const dateISO = addDays(minD, d);
+    const dow = toDate(dateISO).getUTCDay(); // 0=Sun ... 6=Sat
+    const isHoliday = holidaySet.has(dateISO);
+    const isWeekend = dow===0 || dow===6;
+    if(!isHoliday && !isWeekend) continue;
     const x = nameColW + d*dayW;
-    const label = addDays(minD,d).slice(5);
+    const fill = isHoliday ? '#F3D9D3' : '#DCE1EC';
+    svg += `<rect x="${x}" y="${headerH}" width="${dayW}" height="${chartH-headerH-6}" fill="${fill}" fill-opacity="0.7" data-role="bg"/>`;
+  }
+
+  // gridlines + date labels: always day-level (a line + label for every day;
+  // week start, i.e. Sunday, is called out with the month/day label too).
+  for(let d=0; d<=totalDays; d++){
+    const x = nameColW + d*dayW;
+    const dateISO = addDays(minD,d);
+    const dow = toDate(dateISO).getUTCDay();
     svg += `<line x1="${x}" y1="${headerH}" x2="${x}" y2="${chartH-6}" stroke="#CCCFC3" stroke-width="1"/>`;
-    svg += `<text class="mono-text" x="${x+4}" y="${headerH-14}" font-size="11" fill="#5B655F">${label}</text>`;
+    svg += `<text class="mono-text" x="${x+3}" y="${headerH-14}" font-size="9" fill="${dow===0||dow===6?'#8A93A6':'#5B655F'}">${dateISO.slice(8,10)}</text>`;
+    if(dow===0 || d===0){
+      svg += `<text class="mono-text" x="${x+3}" y="${headerH-26}" font-size="9" fill="#8B9088">${dateISO.slice(5,7)}/${dateISO.slice(8,10)}</text>`;
+    }
   }
   svg += `<line x1="${nameColW}" y1="${headerH}" x2="${chartW-10}" y2="${headerH}" stroke="#1F2A26" stroke-width="1"/>`;
   // today marker
@@ -353,12 +421,12 @@ function renderChart(){
   const posMap = {};
   groups.forEach(g=>{
     const color = sectionColor(g.section);
-    svg += `<rect x="0" y="${y-2}" width="${chartW}" height="${rowH-4}" fill="#EDEEE7" data-role="bg"/>`;
+    svg += `<rect x="0" y="${y-2}" width="${chartW}" height="${rowH-4}" fill="#EDEEE7" fill-opacity="0.6" data-role="bg"/>`;
     svg += `<text x="8" y="${y+rowH/2-2}" font-size="12.5" font-weight="600" fill="#1F2A26">${escXml(g.section)}</text>`;
     y += rowH;
     g.tasks.forEach(t=>{
       const x = nameColW + diffDays(minD, t.computedStart)*dayW;
-      const w = Math.max(t.duration,1)*dayW;
+      const w = Math.max(diffDays(t.computedStart, t.computedEnd), 1)*dayW;
       const isSel = selectedIds.has(t.id);
       const idAttr = escXml(t.id);
       svg += `<text x="12" y="${y+rowH/2+3}" font-size="12" fill="#1F2A26">${escXml(t.name)}</text>`;
@@ -419,7 +487,9 @@ function renderChart(){
     `<span><span class="swatch" style="background:${sectionColor(g.section)}"></span>${escXml(g.section)}</span>`
   ).join('') + `<span><span class="swatch" style="background:#fff;border:1px solid #B23A2E"></span>クリティカル(枠線)</span>`
     + `<span><span class="swatch" style="background:#999;opacity:.45"></span>完了(半透明)</span>`
-    + `<span><span class="swatch" style="background:#fff;border:2px dashed #2F6FBD"></span>選択中</span>`;
+    + `<span><span class="swatch" style="background:#fff;border:2px dashed #2F6FBD"></span>選択中</span>`
+    + `<span><span class="swatch" style="background:#DCE1EC"></span>土日</span>`
+    + `<span><span class="swatch" style="background:#F3D9D3"></span>休日</span>`;
 }
 
 // ---------- chart drag interactions ----------
@@ -602,10 +672,16 @@ function startResizeDrag(e, taskId){
     document.removeEventListener('mouseup', onUp);
     document.body.classList.remove('dragging-resize');
     const dayDelta = Math.round(lastDx/dayW);
-    const newDuration = Math.max(0, t.duration + dayDelta);
+    // Translate the calendar-day drag distance into a working-day duration: find the
+    // target calendar end date, then count how many working days fall within the span.
+    const targetEnd = addDays(t.computedEnd, dayDelta);
+    let newDuration = 0, d = t.computedStart;
+    if(targetEnd > t.computedStart){
+      while(d < targetEnd){ d = addDays(d,1); if(!isNonWorkingDay(d)) newDuration++; }
+    }
     if(newDuration !== t.duration){
       t.duration = newDuration;
-      setStatus(`「${t.name}」の期間を${newDuration}日に変更しました。`);
+      setStatus(`「${t.name}」の期間を${newDuration}日(稼働日)に変更しました。`);
     }
     renderAll();
   }
@@ -621,19 +697,20 @@ function renderAll(){
 }
 
 // ---------- Mermaid export ----------
-// NOTE: Mermaid's gantt syntax has no concept of a lag/gap on "after" links.
-// When every dependency has lag 0 we still emit "after id1 id2" (fully round-trippable).
-// When a dependency has a non-zero lag we fall back to an explicit date so the exported
-// file renders with the correct dates in any Mermaid viewer, and add a comment documenting
-// the relationship + gap for reference (re-importing that task will lose the link itself).
-//
-// Colors: Mermaid assigns each *section* (in first-appearance order) a numeric class
-// suffix (task0/active0/done0/crit0 for the 1st section, task1/... for the 2nd, etc, up
-// to config.gantt.numberSectionStyles before it cycles). We emit a %%{init: ...}%%
-// directive with numberSectionStyles set to our section count and a themeCSS block that
-// paints each of those classes with the same color this app uses for that section, so the
-// exported file reproduces our section colors (including a dimmed look for "done" and a
-// red outline for "crit") in any standard Mermaid renderer. Verified against mermaid 12.
+// Full round-trip strategy:
+// - Holidays: emitted as a header `excludes weekends,<date>,<date>...` line. Mermaid's own
+//   `excludes` skips those exact days when turning a duration into an end date, so any
+//   standard Mermaid renderer computes the *same* dates as this app (verified against
+//   mermaid 12 - a 5d task starting Mon with one mid-span holiday ends on the same day here
+//   and there). Re-importing reads this line back into state.holidays.
+// - Zero-lag dependencies: emitted natively as "after id1 id2" - already round-trips via
+//   any Mermaid tool, and other viewers keep showing it as a real chained dependency.
+// - Any dependency with a non-zero lag can't be expressed by "after" (Mermaid has no gap/lag
+//   concept), so for THAT task we fall back to its explicit computed start date (so the date
+//   is still correct everywhere), and additionally emit a machine-readable comment line
+//   `%% gantt-deps: id:lag,id:lag` directly under it. Re-importing this app always prefers
+//   that comment when present, so the exact link + gap is restored losslessly even though
+//   plain Mermaid can only show the date, not the relationship, for that one task.
 function mermaidColorDirective(groups){
   if(groups.length===0) return null;
   const rules = [];
@@ -654,6 +731,8 @@ function toMermaid(){
   const directive = mermaidColorDirective(groups);
   if(directive) lines.push(directive);
   lines.push('gantt', `    title ${state.title||''}`, '    dateFormat  YYYY-MM-DD');
+  const excludeParts = ['weekends', ...state.holidays.slice().sort()];
+  lines.push(`    excludes ${excludeParts.join(',')}`);
   groups.forEach(({section, tasks})=>{
     lines.push(`    section ${section}`);
     tasks.forEach(t=>{
@@ -665,9 +744,8 @@ function toMermaid(){
       else attrs.push(t.computedStart);
       attrs.push((t.status==='milestone' ? 0 : t.duration) + 'd');
       lines.push(`    ${t.name} :${attrs.join(', ')}`);
-      if(hasLag){
-        const note = t.deps.map(d=> d.lag ? `${d.id}(${d.lag>0?'+':''}${d.lag}d)` : d.id).join(', ');
-        lines.push(`    %% depends on: ${note}`);
+      if(t.deps.length){
+        lines.push(`    %% gantt-deps: ${t.deps.map(d=>`${d.id}:${d.lag||0}`).join(',')}`);
       }
     });
   });
@@ -682,16 +760,36 @@ function parseDurationToken(tok){
   return isNaN(n) ? 1 : n;
 }
 function parseMermaidText(text){
-  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l && !l.startsWith('%%'));
+  const rawLines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
   const statusSet = ['active','done','crit','milestone'];
   let title='', section='未分類';
   const tasks=[];
+  const holidays=[];
   let counter=1;
-  for(const line of lines){
+  let lastTask=null;
+  for(const line of rawLines){
+    if(/^%%\{/.test(line)) continue; // init/color directive, not needed on import
+    const depsNote = line.match(/^%%\s*gantt-deps:\s*(.*)$/i);
+    if(depsNote){
+      if(lastTask){
+        lastTask.deps = depsNote[1].split(',').map(s=>s.trim()).filter(Boolean).map(tok=>{
+          const [id,lag] = tok.split(':');
+          return {id, lag: parseInt(lag)||0};
+        });
+      }
+      continue;
+    }
+    if(line.startsWith('%%')) continue; // other comments
     if(/^gantt\b/i.test(line)) continue;
     if(/^title\s+/i.test(line)){ title = line.replace(/^title\s+/i,'').trim(); continue; }
     if(/^dateFormat\b/i.test(line)) continue;
-    if(/^excludes\b/i.test(line)) continue;
+    if(/^excludes\s+/i.test(line)){
+      line.replace(/^excludes\s+/i,'').split(',').map(s=>s.trim()).filter(Boolean).forEach(tok=>{
+        if(/^weekends?$/i.test(tok)) return; // this app always treats weekends as non-working
+        if(isValidISO(tok)) holidays.push(tok);
+      });
+      continue;
+    }
     if(/^axisFormat\b/i.test(line)) continue;
     if(/^todayMarker\b/i.test(line)) continue;
     if(/^section\s+/i.test(line)){ section = line.replace(/^section\s+/i,'').trim(); continue; }
@@ -712,15 +810,17 @@ function parseMermaidText(text){
     else { continue; }
     let deps=[];
     if(/^after\s+/i.test(startTok)){ deps = startTok.replace(/^after\s+/i,'').split(/\s+/).map(id=>({id, lag:0})); startTok=''; }
-    tasks.push({
+    const task = {
       id: id||('t_'+(counter++)),
       name, section,
       start: isValidISO(startTok) ? startTok : '',
       duration: durTok ? parseDurationToken(durTok) : 1,
       status, deps
-    });
+    };
+    tasks.push(task);
+    lastTask = task;
   }
-  return {title, tasks};
+  return {title, tasks, holidays};
 }
 
 // ---------- draw.io export ----------
@@ -729,7 +829,7 @@ function toDrawio(){
   const rowH=32, headerH=40, nameColW=200, dayW=26;
   const groups = groupedTasks();
   let minD = state.tasks.reduce((m,t)=>(!m||t.computedStart<m)?t.computedStart:m, null) || todayISO();
-  let maxD = state.tasks.reduce((m,t)=>{ const e=addDays(t.computedStart, Math.max(t.duration,1)); return (!m||e>m)?e:m; }, null) || addDays(minD,7);
+  let maxD = state.tasks.reduce((m,t)=>{ const e=t.computedEnd>t.computedStart?t.computedEnd:addDays(t.computedStart,1); return (!m||e>m)?e:m; }, null) || addDays(minD,7);
   minD = addDays(minD,-1); maxD = addDays(maxD,1);
   const totalDays = diffDays(minD,maxD);
   let n=0; const nid=()=>'c'+(n++);
@@ -750,7 +850,7 @@ function toDrawio(){
     y += rowH;
     g.tasks.forEach(t=>{
       const x = nameColW + diffDays(minD, t.computedStart)*dayW;
-      const w = Math.max(t.duration,1)*dayW;
+      const w = Math.max(diffDays(t.computedStart, t.computedEnd), 1)*dayW;
       const depsAttr = t.deps.map(d=>`${d.id}:${d.lag||0}`).join(',');
       cells.push(`<mxCell id="${nid()}" value="${escXml(t.name)}" style="text;html=1;fontFamily=IBM Plex Sans JP;fontSize=11;fontColor=#1F2A26;" vertex="1" parent="1"><mxGeometry x="14" y="${y}" width="${nameColW-18}" height="${rowH}" as="geometry"/></mxCell>`);
       const objId = 'task-' + t.id.replace(/[^a-zA-Z0-9_-]/g,'_');
@@ -764,7 +864,7 @@ function toDrawio(){
       y += rowH;
     });
   });
-  return `<mxfile host="app.diagrams.net"><diagram name="${escXml(state.title||'Gantt')}" id="ganttDiagram"><mxGraphModel dx="900" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${cells.join('')}</root></mxGraphModel></diagram></mxfile>`;
+  return `<mxfile host="app.diagrams.net"><diagram name="${escXml(state.title||'Gantt')}" id="ganttDiagram"><mxGraphModel dx="900" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/><object ganttHolidays="${escXml(state.holidays.slice().sort().join(','))}" id="ganttMeta" label="" visible="0"><mxCell style="none;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="1" height="1" as="geometry"/></mxCell></object>${cells.join('')}</root></mxGraphModel></diagram></mxfile>`;
 }
 const RESOLVED_COLORS = ['#3D6A72','#7A8F52','#8C6B3F','#5B6E9A','#96536B','#4F7A50'];
 function getCssColor(section){
@@ -794,7 +894,9 @@ function parseDrawioText(text){
     })
   }));
   const title = doc.querySelector('diagram')?.getAttribute('name') || '';
-  return {title, tasks};
+  const holidaysAttr = doc.querySelector('object[ganttHolidays]')?.getAttribute('ganttHolidays') || '';
+  const holidays = holidaysAttr.split(',').map(s=>s.trim()).filter(isValidISO);
+  return {title, tasks, holidays};
 }
 
 // ---------- file helpers ----------
@@ -823,6 +925,30 @@ document.getElementById('titleInput').addEventListener('input', e=>{ state.title
 document.getElementById('addTaskBtn').addEventListener('click', addTask);
 document.getElementById('addTaskTop').addEventListener('click', addTask);
 
+function renderHolidayChips(){
+  const host = document.getElementById('holidayChips');
+  host.innerHTML = [...state.holidays].sort().map(d=>
+    `<span class="holiday-chip">${d}<button data-date="${d}" title="削除">×</button></span>`
+  ).join('');
+  host.querySelectorAll('button[data-date]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.holidays = state.holidays.filter(d=>d!==btn.dataset.date);
+      renderHolidayChips();
+      renderChart();
+    });
+  });
+}
+document.getElementById('addHolidayBtn').addEventListener('click', ()=>{
+  const input = document.getElementById('holidayInput');
+  const v = input.value;
+  if(!v || !isValidISO(v)) return;
+  if(!state.holidays.includes(v)) state.holidays.push(v);
+  input.value = '';
+  renderHolidayChips();
+  renderChart();
+});
+renderHolidayChips();
+
 document.getElementById('exportMermaidBtn').addEventListener('click', ()=>{
   download((state.title||'gantt')+'.mmd', toMermaid(), 'text/plain');
   setStatus('Mermaidファイルを書き出しました。');
@@ -838,8 +964,10 @@ document.getElementById('importMermaidFile').addEventListener('change', e=>{
       const parsed = parseMermaidText(text);
       state.title = parsed.title || state.title;
       state.tasks = parsed.tasks;
+      state.holidays = parsed.holidays || [];
       autoIdCounter = 1000;
       Object.keys(sectionColorMap).forEach(k=>delete sectionColorMap[k]);
+      renderHolidayChips();
       renderAll();
       setStatus(`Mermaidファイルから ${parsed.tasks.length} 件のタスクを読み込みました。`);
     }catch(err){ setStatus('読み込みエラー: '+err.message, true); }
@@ -853,8 +981,10 @@ document.getElementById('importDrawioFile').addEventListener('change', e=>{
       const parsed = parseDrawioText(text);
       state.title = parsed.title || state.title;
       state.tasks = parsed.tasks;
+      state.holidays = parsed.holidays || [];
       autoIdCounter = 1000;
       Object.keys(sectionColorMap).forEach(k=>delete sectionColorMap[k]);
+      renderHolidayChips();
       renderAll();
       setStatus(`draw.ioファイルから ${parsed.tasks.length} 件のタスクを読み込みました。`);
     }catch(err){ setStatus('読み込みエラー: '+err.message, true); }
