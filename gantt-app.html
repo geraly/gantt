@@ -53,10 +53,11 @@
     width:400px; min-width:400px; padding:16px; border-right:1px solid var(--line);
     height:calc(100vh - 66px); overflow-y:auto;
   }
+  #taskPanel.collapsed{width:0; min-width:0; padding:0; border-right:none; overflow:hidden;}
   #taskPanel h2{font-size:12px; text-transform:none; color:var(--soft); margin:0 0 10px; font-weight:600;}
   .card{
-    border:1px solid var(--line); background:var(--panel); padding:10px; margin-bottom:10px; border-radius:2px;
-    position:relative;
+    border:1px solid var(--line); background:var(--panel); padding:10px 10px 10px 26px; margin-bottom:10px; border-radius:2px;
+    position:relative; transition:opacity .1s;
   }
   .card .row{display:flex; gap:6px; margin-bottom:6px;}
   .card label{display:block; font-size:10px; color:var(--soft); margin-bottom:2px;}
@@ -72,10 +73,27 @@
     font-size:15px; padding:0 4px; cursor:pointer;
   }
   .card .del:hover{color:var(--crit); background:none;}
+  .drag-handle{
+    position:absolute; top:8px; left:4px; color:var(--line); font-size:14px; line-height:1;
+    cursor:grab; user-select:none; padding:2px;
+  }
+  .drag-handle:hover{color:var(--soft);}
+  .drag-handle:active{cursor:grabbing;}
+  .card.dragging-source{opacity:0.35;}
+  .section-group{margin-bottom:2px;}
+  .section-group.dragging-source{opacity:0.35;}
+  .section-header{
+    font-size:11px; font-weight:600; color:var(--soft); padding:8px 4px 4px 4px;
+    border-top:2px solid transparent;
+  }
+  .section-drag-handle{cursor:grab; margin-right:5px; color:var(--line); display:inline-block;}
+  .section-drag-handle:hover{color:var(--soft);}
+  .section-drag-handle:active{cursor:grabbing;}
+  .section-group:first-child .section-header{padding-top:0;}
+  .card.drag-over-top{border-top:2px solid var(--accent);}
+  .card.drag-over-bottom{border-bottom:2px solid var(--accent);}
+  .section-header.drag-over-bottom{border-top:2px solid var(--accent);}
   .w2{width:66%;} .w1{width:34%;}
-  .date-duration-row{align-items:flex-start;}
-  .date-duration-row .date-field{flex:2 1 0; min-width:0;}
-  .date-duration-row .duration-field{flex:1 1 0; min-width:0;}
   #addTaskBtn{width:100%; margin-top:4px;}
   #chartWrap{
     flex:1; height:calc(100vh - 66px); overflow:auto; padding:20px;
@@ -112,11 +130,14 @@
   <div class="brand">GANTT <b>STUDIO</b></div>
   <input class="title-input" id="titleInput" placeholder="プロジェクト名">
   <div class="toolbar">
+    <button id="togglePanelBtn" title="タスク一覧の表示/非表示">☰ 一覧</button>
     <button id="addTaskTop">+ タスク追加</button>
     <label class="filebtn">Mermaid読込<input type="file" id="importMermaidFile" accept=".mmd,.mermaid,.txt"></label>
     <label class="filebtn">draw.io読込<input type="file" id="importDrawioFile" accept=".xml,.drawio"></label>
     <button class="primary" id="exportMermaidBtn">Mermaid書出</button>
     <button class="primary" id="exportDrawioBtn">draw.io書出</button>
+    <button class="primary" id="exportHtmlBtn">HTML書出</button>
+    <button id="exportPngBtn">📷 スクリーンショット</button>
   </div>
 </header>
 <div id="status"></div>
@@ -127,7 +148,7 @@
     <button id="addTaskBtn">+ タスクを追加</button>
   </div>
   <div id="chartWrap">
-    <p id="chartHint">バーをドラッグして開始日を変更できます（依存関係がある場合は解除されず、間隔=ラグだけ調整されます）。右端のハンドルで期間を変更、バー右の○をドラッグして別のタスクに繋ぐと依存関係を作成、矢印上の×で解除できます。依存タスク欄に「t1+3」のように書くと間隔を直接指定できます。Shift+クリックで複数選択し、まとめてドラッグできます。期間(日数)は稼働日ベースで計算され、土日・登録した休日はスキップされます（開始日が休日に重なった場合も次の稼働日に自動でずれます）。</p>
+    <p id="chartHint">バーをドラッグして開始日を変更できます（依存関係がある場合は解除されず、間隔=ラグだけ調整されます）。右端のハンドルで期間を変更、バー右の○をドラッグして別のタスクに繋ぐと依存関係を作成、矢印上の×で解除できます。依存タスク欄に「t1+3」のように書くと間隔を直接指定できます。Shift+クリックで複数選択し、まとめてドラッグできます。バーを上下に大きくドラッグすると、タスクの並び順やセクションを変更できます。期間(日数)は稼働日ベースで計算され、土日・登録した休日はスキップされます（開始日が休日に重なった場合も次の稼働日に自動でずれます）。</p>
     <div id="holidayBar" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12px; color:var(--soft);">
       <span>休日:</span>
       <input type="date" id="holidayInput" style="font-family:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--grid); border-radius:2px;">
@@ -140,9 +161,10 @@
 </main>
 
 <script>
-const SECTION_COLORS = ['var(--s0)','var(--s1)','var(--s2)','var(--s3)','var(--s4)','var(--s5)'];
+const SECTION_COLORS = ['#3D6A72','#7A8F52','#8C6B3F','#5B6E9A','#96536B','#4F7A50'];
 const STATUS_OPTIONS = [['','通常'],['active','進行中'],['done','完了'],['crit','クリティカル'],['milestone','マイルストーン']];
 
+/* GANTT_STATE_START */
 let state = {
   title: 'Webサイトリニューアル',
   holidays: [],
@@ -156,9 +178,9 @@ let state = {
     {id:'t7', name:'公開', section:'開発', start:'', duration:0, status:'milestone', deps:[{id:'t5', lag:0},{id:'t6', lag:0}]},
   ]
 };
-let autoIdCounter = 8;
+/* GANTT_STATE_END */
+let autoIdCounter = computeSafeAutoIdCounter(state.tasks);
 const sectionColorMap = {};
-let isComposing = false;
 
 function nextId(){ return 't'+(autoIdCounter++); }
 
@@ -257,70 +279,76 @@ function groupedTasks(){
 function renderCards(){
   const host = document.getElementById('cards');
   host.innerHTML = '';
-  const existingSections = [...new Set(state.tasks.map(t=>String(t.section||'').trim()).filter(Boolean))];
-  state.tasks.forEach((t, idx)=>{
-    const card = document.createElement('div');
-    card.className = 'card';
-    const depsAllowed = state.tasks.filter(o=>o.id!==t.id).map(o=>o.id).join(', ');
-    card.innerHTML = `
-      <button class="del" title="削除" data-act="del" data-idx="${idx}">×</button>
-      <div class="row">
-        <div style="width:100%">
-          <label>タスク名</label>
-          <input data-act="name" data-idx="${idx}" value="${escXml(t.name)}">
+  const existingSections = [...new Set(state.tasks.map(t=>t.section).filter(Boolean))];
+  groupedTasks().forEach(({section, tasks})=>{
+    const group = document.createElement('div');
+    group.className = 'section-group';
+    group.dataset.section = section;
+    const header = document.createElement('div');
+    header.className = 'section-header';
+    header.dataset.section = section;
+    header.innerHTML = `<span class="section-drag-handle" data-section-drag="${escXml(section)}" title="ドラッグでセクションの順番を変更">⠿</span>${escXml(section)}`;
+    group.appendChild(header);
+
+    tasks.forEach(t=>{
+      const idx = state.tasks.indexOf(t);
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.taskId = t.id;
+      const depsAllowed = state.tasks.filter(o=>o.id!==t.id).map(o=>o.id).join(', ');
+      card.innerHTML = `
+        <span class="drag-handle" title="ドラッグで並べ替え/セクション変更" data-drag-handle="${escXml(t.id)}">⠿</span>
+        <button class="del" title="削除" data-act="del" data-idx="${idx}">×</button>
+        <div class="row">
+          <div style="width:100%">
+            <label>タスク名</label>
+            <input data-act="name" data-idx="${idx}" value="${escXml(t.name)}">
+          </div>
         </div>
-      </div>
-      <div class="row">
-        <div class="w2">
-          <label>セクション</label>
-          <input data-act="section" data-idx="${idx}" value="${escXml(t.section)}" list="sectionList" autocomplete="off">
+        <div class="row">
+          <div class="w2">
+            <label>セクション</label>
+            <input data-act="section" data-idx="${idx}" value="${escXml(t.section)}" list="sectionList">
+          </div>
+          <div class="w1">
+            <label>ID</label>
+            <input data-act="id" data-idx="${idx}" value="${escXml(t.id)}">
+          </div>
         </div>
-        <div class="w1">
-          <label>ID</label>
-          <input data-act="id" data-idx="${idx}" value="${escXml(t.id)}">
+        <div class="row">
+          <div class="w1">
+            <label>状態</label>
+            <select data-act="status" data-idx="${idx}">
+              ${STATUS_OPTIONS.map(([v,l])=>`<option value="${v}" ${t.status===v?'selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="w2">
+            <label>依存タスク(例: t1, t2+3)</label>
+            <input data-act="deps" data-idx="${idx}" value="${escXml(depsToText(t.deps))}" placeholder="例: ${depsAllowed.split(',')[0]?.trim()||'t1'}+2">
+          </div>
         </div>
-      </div>
-      <div class="row">
-        <div class="w1">
-          <label>状態</label>
-          <select data-act="status" data-idx="${idx}">
-            ${STATUS_OPTIONS.map(([v,l])=>`<option value="${v}" ${t.status===v?'selected':''}>${l}</option>`).join('')}
-          </select>
+        <div class="row">
+          <div class="w2">
+            <label>開始日${t.deps.length?'(自動)':''}</label>
+            <input type="date" data-act="start" data-idx="${idx}" value="${t.deps.length? t.computedStart : t.start}" ${t.deps.length?'disabled':''}>
+          </div>
+          <div class="w1">
+            <label>期間(稼働日)</label>
+            <input type="number" min="0" data-act="duration" data-idx="${idx}" value="${t.status==='milestone'?0:t.duration}" ${t.status==='milestone'?'disabled':''}>
+          </div>
         </div>
-        <div class="w2">
-          <label>依存タスク(例: t1, t2+3)</label>
-          <input data-act="deps" data-idx="${idx}" value="${escXml(depsToText(t.deps))}" placeholder="例: ${depsAllowed.split(',')[0]?.trim()||'t1'}+2">
-        </div>
-      </div>
-      <div class="row date-duration-row">
-        <div class="date-field">
-          <label>開始日${t.deps.length?'(自動)':''}</label>
-          <input type="date" data-act="start" data-idx="${idx}" value="${t.deps.length? t.computedStart : t.start}" ${t.deps.length?'disabled':''}>
-        </div>
-        <div class="duration-field">
-          <label>期間(稼働日)</label>
-          <input type="number" min="0" data-act="duration" data-idx="${idx}" value="${t.status==='milestone'?0:t.duration}" ${t.status==='milestone'?'disabled':''}>
-        </div>
-      </div>
-    `;
-    host.appendChild(card);
+      `;
+      group.appendChild(card);
+    });
+    host.appendChild(group);
   });
   let dl = document.getElementById('sectionList');
   if(!dl){ dl=document.createElement('datalist'); dl.id='sectionList'; document.body.appendChild(dl); }
   dl.innerHTML = existingSections.map(s=>`<option value="${escXml(s)}">`).join('');
 
   host.querySelectorAll('[data-act]').forEach(el=>{
-    el.addEventListener('input', onFieldChange);
-    el.addEventListener('change', onFieldChange);
-  });
-  host.querySelectorAll('[data-act="section"]').forEach(el=>{
-    el.addEventListener('compositionstart', ()=>{
-      isComposing = true;
-    });
-    el.addEventListener('compositionend', e=>{
-      isComposing = false;
-      onFieldChange(e);
-    });
+    el.addEventListener('input', onFieldInput);
+    el.addEventListener('change', onFieldCommit);
   });
   host.querySelectorAll('[data-act=del]').forEach(el=>{
     el.addEventListener('click', ()=>{
@@ -328,7 +356,151 @@ function renderCards(){
       renderAll();
     });
   });
+  host.querySelectorAll('[data-drag-handle]').forEach(el=>{
+    el.addEventListener('mousedown', e=>startCardDrag(e, el.dataset.dragHandle));
+  });
+  host.querySelectorAll('[data-section-drag]').forEach(el=>{
+    el.addEventListener('mousedown', e=>startSectionDragList(e, el.dataset.sectionDrag));
+  });
 }
+
+// ---------- task list drag & drop (reorder + change section) ----------
+function clearDropIndicators(){
+  document.querySelectorAll('#cards .drag-over-top, #cards .drag-over-bottom').forEach(el=>{
+    el.classList.remove('drag-over-top','drag-over-bottom');
+  });
+}
+// Scans the task-list DOM (grouped by section) for the drop target under clientY:
+// which section to assign, and which task (if any) to insert before. Dropping on a
+// section header means "first in that section"; dropping past a group's last card
+// means "last in that section".
+function computeCardDropTarget(clientY){
+  const groups = Array.from(document.querySelectorAll('#cards .section-group'));
+  if(groups.length===0) return null;
+  for(const group of groups){
+    const rect = group.getBoundingClientRect();
+    if(clientY < rect.top || clientY > rect.bottom) continue;
+    const section = group.dataset.section;
+    const cards = Array.from(group.querySelectorAll(':scope > .card'));
+    for(const card of cards){
+      const r = card.getBoundingClientRect();
+      if(clientY < r.top + r.height/2){
+        return {section, beforeTaskId: card.dataset.taskId, indicatorEl: card, indicatorPos:'top'};
+      }
+    }
+    const header = group.querySelector('.section-header');
+    return {section, beforeTaskId: null, indicatorEl: cards.length? cards[cards.length-1] : header, indicatorPos:'bottom'};
+  }
+  const first = groups[0].getBoundingClientRect();
+  if(clientY < first.top){
+    const firstCard = groups[0].querySelector('.card');
+    return {section: groups[0].dataset.section, beforeTaskId: firstCard?.dataset.taskId || null, indicatorEl: groups[0].querySelector('.section-header'), indicatorPos:'bottom'};
+  }
+  const lastGroup = groups[groups.length-1];
+  const lastCards = Array.from(lastGroup.querySelectorAll(':scope > .card'));
+  const indicatorEl = lastCards.length? lastCards[lastCards.length-1] : lastGroup.querySelector('.section-header');
+  return {section: lastGroup.dataset.section, beforeTaskId: null, indicatorEl, indicatorPos:'bottom'};
+}
+function moveTask(taskId, targetSection, beforeTaskId){
+  const idx = state.tasks.findIndex(t=>t.id===taskId);
+  if(idx===-1) return;
+  const [task] = state.tasks.splice(idx,1);
+  task.section = targetSection;
+  let insertIdx;
+  if(beforeTaskId){
+    insertIdx = state.tasks.findIndex(t=>t.id===beforeTaskId);
+    if(insertIdx===-1) insertIdx = state.tasks.length;
+  } else {
+    let lastIdx = -1;
+    state.tasks.forEach((t,i)=>{ if(t.section===targetSection) lastIdx=i; });
+    insertIdx = lastIdx===-1 ? state.tasks.length : lastIdx+1;
+  }
+  state.tasks.splice(insertIdx, 0, task);
+}
+// Reorders whole sections (moves every task of `section`, as one block, to just
+// before the first task of `beforeSection` - or to the very end if beforeSection
+// is null/omitted). Relative order of tasks within the moved section is preserved.
+function moveSectionBlock(section, beforeSection){
+  if(section===beforeSection) return;
+  const blockTasks = state.tasks.filter(t=>t.section===section);
+  const rest = state.tasks.filter(t=>t.section!==section);
+  if(beforeSection){
+    const idx = rest.findIndex(t=>t.section===beforeSection);
+    state.tasks = idx===-1 ? [...rest, ...blockTasks] : [...rest.slice(0,idx), ...blockTasks, ...rest.slice(idx)];
+  } else {
+    state.tasks = [...rest, ...blockTasks];
+  }
+}
+function startCardDrag(e, taskId){
+  e.preventDefault();
+  const sourceCard = document.querySelector(`#cards .card[data-task-id="${CSS.escape(taskId)}"]`);
+  if(sourceCard) sourceCard.classList.add('dragging-source');
+  document.body.classList.add('dragging-move');
+  let lastTarget = null;
+  function onMove(ev){
+    clearDropIndicators();
+    const target = computeCardDropTarget(ev.clientY);
+    lastTarget = target;
+    if(target && target.indicatorEl){
+      target.indicatorEl.classList.add(target.indicatorPos==='top' ? 'drag-over-top' : 'drag-over-bottom');
+    }
+  }
+  function onUp(){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('dragging-move');
+    clearDropIndicators();
+    if(sourceCard) sourceCard.classList.remove('dragging-source');
+    if(lastTarget && lastTarget.beforeTaskId !== taskId){
+      moveTask(taskId, lastTarget.section, lastTarget.beforeTaskId);
+      renderAll();
+    }
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// Reordering whole sections in the left list: compares against other section-group
+// midpoints only (individual cards are irrelevant to this drag).
+function computeSectionDropTarget(clientY, draggedSection){
+  const groups = Array.from(document.querySelectorAll('#cards .section-group'))
+    .filter(g=>g.dataset.section!==draggedSection);
+  if(groups.length===0) return null;
+  for(const g of groups){
+    const r = g.getBoundingClientRect();
+    const mid = r.top + r.height/2;
+    if(clientY < mid) return {beforeSection: g.dataset.section, indicatorEl: g.querySelector('.section-header')};
+  }
+  return {beforeSection: null, indicatorEl: null};
+}
+function startSectionDragList(e, section){
+  e.preventDefault();
+  e.stopPropagation();
+  const sourceGroup = document.querySelector(`#cards .section-group[data-section="${CSS.escape(section)}"]`);
+  if(sourceGroup) sourceGroup.classList.add('dragging-source');
+  document.body.classList.add('dragging-move');
+  let lastTarget = null;
+  function onMove(ev){
+    clearDropIndicators();
+    const target = computeSectionDropTarget(ev.clientY, section);
+    lastTarget = target;
+    if(target && target.indicatorEl) target.indicatorEl.classList.add('drag-over-bottom');
+  }
+  function onUp(){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('dragging-move');
+    clearDropIndicators();
+    if(sourceGroup) sourceGroup.classList.remove('dragging-source');
+    if(lastTarget){
+      moveSectionBlock(section, lastTarget.beforeSection);
+      renderAll();
+    }
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
 
 // "t1, t2+3, t4-1" <-> [{id:'t1',lag:0},{id:'t2',lag:3},{id:'t4',lag:-1}]
 function depsToText(deps){
@@ -342,10 +514,11 @@ function textToDeps(text){
   });
 }
 
-function onFieldChange(e){
-  // Do not re-render while Japanese/full-width IME composition is active.
-  // Replacing the input element during composition interrupts text entry.
-  if(isComposing || e.isComposing) return;
+// Applying the value on every keystroke (input) but only rebuilding the DOM on
+// commit (change/blur) keeps the field itself untouched while typing - rebuilding
+// mid-keystroke would reset the cursor and break IME composition (e.g. typing
+// Japanese into "section"), cutting input off after the first character.
+function applyFieldValue(e){
   const idx = +e.target.dataset.idx;
   const act = e.target.dataset.act;
   const t = state.tasks[idx];
@@ -357,11 +530,13 @@ function onFieldChange(e){
   else if(act==='deps') t.deps = textToDeps(e.target.value);
   else if(act==='start') t.start = e.target.value;
   else if(act==='duration') t.duration = Math.max(0, parseInt(e.target.value)||0);
-  renderAll();
 }
+function onFieldInput(e){ applyFieldValue(e); }
+function onFieldCommit(e){ applyFieldValue(e); renderAll(); }
 
-function addTask(){
-  state.tasks.push({id:nextId(), name:'新しいタスク', section: state.tasks.length? state.tasks[state.tasks.length-1].section : '未分類', start: todayISO(), duration:3, status:'', deps:[]});
+function addTask(section){
+  const targetSection = section || (state.tasks.length? state.tasks[state.tasks.length-1].section : '未分類');
+  state.tasks.push({id:nextId(), name:'新しいタスク', section: targetSection, start: todayISO(), duration:3, status:'', deps:[]});
   renderAll();
 }
 
@@ -371,6 +546,8 @@ let CURRENT = null;         // {minD, dayW, nameColW, rowH, headerH}
 let taskGroupEls = {};      // id -> <g> element (whole task visual, moved via transform)
 let taskBarEls = {};        // id -> bar rect or milestone polygon (resized/highlighted)
 let taskHandleEls = {};     // id -> resize handle rect (non-milestone only)
+let posMapGlobal = {};      // id -> {xStart, xEnd, y} snapshot from the last render
+let chartRowLayout = [];    // ordered list of {type:'header'|'task', section, taskId?, yTop, yBottom}
 
 function renderChart(){
   resolveSchedule();
@@ -381,7 +558,7 @@ function renderChart(){
   if(state.tasks.length===0){
     document.getElementById('chartHost').innerHTML = '<p style="color:var(--soft);font-size:13px;">タスクがありません。左のパネルから追加してください。</p>';
     document.getElementById('legend').innerHTML='';
-    taskGroupEls={}; taskBarEls={}; taskHandleEls={};
+    taskGroupEls={}; taskBarEls={}; taskHandleEls={}; posMapGlobal={}; chartRowLayout=[];
     return;
   }
   let minD = state.tasks.reduce((m,t)=> (!m||t.computedStart<m)?t.computedStart:m, null);
@@ -390,9 +567,10 @@ function renderChart(){
   const totalDays = diffDays(minD,maxD);
   const bodyRows = groups.reduce((n,g)=>n+g.tasks.length+1,0);
   const chartW = nameColW + totalDays*dayW + 20;
-  const chartH = headerH + bodyRows*rowH + 10;
+  const addSectionY = headerH + bodyRows*rowH + 6;
+  const chartH = addSectionY + rowH + 4;
   const todayX = nameColW + diffDays(minD, todayISO())*dayW;
-  CURRENT = {minD, dayW, nameColW, rowH, headerH};
+  CURRENT = {minD, dayW, nameColW, rowH, headerH, chartW};
 
   let svg = `<svg class="mono" width="${chartW}" height="${chartH}" viewBox="0 0 ${chartW} ${chartH}" xmlns="http://www.w3.org/2000/svg">`;
   svg += `<defs><marker id="depArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8B9088"/></marker></defs>`;
@@ -409,7 +587,7 @@ function renderChart(){
     if(!isHoliday && !isWeekend) continue;
     const x = nameColW + d*dayW;
     const fill = isHoliday ? '#F3D9D3' : '#DCE1EC';
-    svg += `<rect x="${x}" y="${headerH}" width="${dayW}" height="${chartH-headerH-6}" fill="${fill}" fill-opacity="0.7" data-role="bg"/>`;
+    svg += `<rect x="${x}" y="${headerH}" width="${dayW}" height="${addSectionY-headerH-2}" fill="${fill}" fill-opacity="0.7" data-role="bg"/>`;
   }
 
   // gridlines + date labels: always day-level (a line + label for every day;
@@ -418,7 +596,7 @@ function renderChart(){
     const x = nameColW + d*dayW;
     const dateISO = addDays(minD,d);
     const dow = toDate(dateISO).getUTCDay();
-    svg += `<line x1="${x}" y1="${headerH}" x2="${x}" y2="${chartH-6}" stroke="#CCCFC3" stroke-width="1"/>`;
+    svg += `<line x1="${x}" y1="${headerH}" x2="${x}" y2="${addSectionY-2}" stroke="#CCCFC3" stroke-width="1"/>`;
     svg += `<text class="mono-text" x="${x+3}" y="${headerH-14}" font-size="9" fill="${dow===0||dow===6?'#8A93A6':'#5B655F'}">${dateISO.slice(8,10)}</text>`;
     if(dow===0 || d===0){
       svg += `<text class="mono-text" x="${x+3}" y="${headerH-26}" font-size="9" fill="#8B9088">${dateISO.slice(5,7)}/${dateISO.slice(8,10)}</text>`;
@@ -427,23 +605,27 @@ function renderChart(){
   svg += `<line x1="${nameColW}" y1="${headerH}" x2="${chartW-10}" y2="${headerH}" stroke="#1F2A26" stroke-width="1"/>`;
   // today marker
   if(todayX >= nameColW && todayX <= chartW-10){
-    svg += `<line x1="${todayX}" y1="${headerH}" x2="${todayX}" y2="${chartH-6}" stroke="#C1572B" stroke-width="1.5" stroke-dasharray="3,3"/>`;
+    svg += `<line x1="${todayX}" y1="${headerH}" x2="${todayX}" y2="${addSectionY-2}" stroke="#C1572B" stroke-width="1.5" stroke-dasharray="3,3"/>`;
     svg += `<text class="mono-text" x="${todayX+3}" y="${headerH-2}" font-size="10" fill="#C1572B">今日</text>`;
   }
 
   let y = headerH + 6;
   const posMap = {};
+  const rowLayout = [];
   groups.forEach(g=>{
     const color = sectionColor(g.section);
-    svg += `<rect x="0" y="${y-2}" width="${chartW}" height="${rowH-4}" fill="#EDEEE7" fill-opacity="0.6" data-role="bg"/>`;
-    svg += `<text x="8" y="${y+rowH/2-2}" font-size="12.5" font-weight="600" fill="#1F2A26">${escXml(g.section)}</text>`;
+    svg += `<rect x="0" y="${y-2}" width="${chartW}" height="${rowH-4}" fill="#EDEEE7" fill-opacity="0.6" data-role="bg" data-section="${escXml(g.section)}"/>`;
+    svg += `<text data-role="section-drag" data-section="${escXml(g.section)}" x="4" y="${y+rowH/2-2}" font-size="12" fill="#B7BBAC" style="cursor:grab;">⠿</text>`;
+    svg += `<text data-role="section-label" data-section="${escXml(g.section)}" x="20" y="${y+rowH/2-2}" font-size="12.5" font-weight="600" fill="#1F2A26" style="cursor:text;">${escXml(g.section)}</text>`;
+    rowLayout.push({type:'header', section:g.section, yTop:y, yBottom:y+rowH});
     y += rowH;
     g.tasks.forEach(t=>{
       const x = nameColW + diffDays(minD, t.computedStart)*dayW;
       const w = Math.max(diffDays(t.computedStart, t.computedEnd), 1)*dayW;
       const isSel = selectedIds.has(t.id);
       const idAttr = escXml(t.id);
-      svg += `<text x="12" y="${y+rowH/2+3}" font-size="12" fill="#1F2A26">${escXml(t.name)}</text>`;
+      rowLayout.push({type:'task', section:g.section, taskId:t.id, yTop:y, yBottom:y+rowH});
+      svg += `<text data-role="task-label" data-task-id="${idAttr}" x="12" y="${y+rowH/2+3}" font-size="12" fill="#1F2A26" style="cursor:text;">${escXml(t.name)}</text>`;
       svg += `<g data-task-id="${idAttr}" transform="translate(0,0)">`;
       if(t.status==='milestone'){
         const cx=x, cy=y+rowH/2;
@@ -483,10 +665,14 @@ function renderChart(){
            + `</g>`;
     });
   });
+  svg += `<rect data-role="add-section-row" x="4" y="${addSectionY}" width="${chartW-8}" height="${rowH-6}" rx="3" fill="none" stroke="#B7BBAC" stroke-dasharray="4,3" style="cursor:pointer;"/>`;
+  svg += `<text data-role="add-section-row" x="${chartW/2}" y="${addSectionY+rowH/2-1}" text-anchor="middle" font-size="12" fill="#8B9088" style="cursor:pointer;">+ 新しいセクションを追加（ダブルクリック）</text>`;
   svg += `</svg>`;
   document.getElementById('chartHost').innerHTML = svg;
 
   taskGroupEls={}; taskBarEls={}; taskHandleEls={};
+  posMapGlobal = posMap;
+  chartRowLayout = rowLayout;
   document.querySelectorAll('#chartHost g[data-task-id]').forEach(g=>{
     taskGroupEls[g.getAttribute('data-task-id')] = g;
   });
@@ -521,6 +707,11 @@ function onChartMouseDown(e){
   if(role==='connector' && taskId){
     e.preventDefault(); e.stopPropagation();
     startLinkDrag(e, taskId);
+    return;
+  }
+  if(role==='section-drag' && target.dataset.section){
+    e.preventDefault(); e.stopPropagation();
+    startSectionDragChart(e, target.dataset.section);
     return;
   }
   if(role==='handle' && taskId){
@@ -623,20 +814,174 @@ function startLinkDrag(e, sourceId){
   document.addEventListener('mouseup', onUp);
 }
 
-function startMoveDrag(e, ids){
-  const startClientX = e.clientX;
-  const dayW = CURRENT.dayW;
-  const els = ids.map(id=>taskGroupEls[id]).filter(Boolean);
+// Finds which row (in the chart's own top-to-bottom layout) a given SVG-space Y
+// falls in, and returns the section + "insert before this task" target - mirrors
+// computeCardDropTarget but works from the chart's own row geometry instead of
+// measuring the DOM, since the SVG is redrawn from scratch on every render.
+function computeChartDropTarget(targetY){
+  if(chartRowLayout.length===0) return null;
+  for(let i=0;i<chartRowLayout.length;i++){
+    const row = chartRowLayout[i];
+    if(targetY > row.yBottom) continue;
+    if(row.type==='header'){
+      const firstInSection = chartRowLayout.find(r=>r.type==='task' && r.section===row.section);
+      return {section: row.section, beforeTaskId: firstInSection ? firstInSection.taskId : null};
+    }
+    const mid = (row.yTop+row.yBottom)/2;
+    if(targetY < mid){
+      return {section: row.section, beforeTaskId: row.taskId};
+    }
+    const next = chartRowLayout[i+1];
+    if(next && next.type==='task' && next.section===row.section){
+      return {section: row.section, beforeTaskId: next.taskId};
+    }
+    return {section: row.section, beforeTaskId: null};
+  }
+  const lastRow = chartRowLayout[chartRowLayout.length-1];
+  return {section: lastRow.section, beforeTaskId: null};
+}
+function guideYFor(target){
+  if(!target) return null;
+  if(target.beforeTaskId){
+    const row = chartRowLayout.find(r=>r.type==='task' && r.taskId===target.beforeTaskId);
+    if(row) return row.yTop;
+  }
+  const rows = chartRowLayout.filter(r=>r.type==='task' && r.section===target.section);
+  if(rows.length) return rows[rows.length-1].yBottom;
+  const header = chartRowLayout.find(r=>r.type==='header' && r.section===target.section);
+  return header ? header.yBottom : null;
+}
+function showRowGuide(y){
+  const svg = document.querySelector('#chartHost svg');
+  if(!svg || y==null) return;
+  let line = svg.querySelector('#rowDropGuide');
+  if(!line){
+    line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('id','rowDropGuide');
+    line.setAttribute('stroke','#2F6FBD');
+    line.setAttribute('stroke-width','2.5');
+    line.setAttribute('pointer-events','none');
+    svg.appendChild(line);
+  }
+  const vb = svg.viewBox.baseVal;
+  const width = vb ? vb.width : (svg.getAttribute('width')||1000);
+  line.setAttribute('x1', 0); line.setAttribute('x2', width);
+  line.setAttribute('y1', y); line.setAttribute('y2', y);
+  line.style.display = '';
+}
+function hideRowGuide(){
+  const line = document.querySelector('#chartHost #rowDropGuide');
+  if(line) line.style.display = 'none';
+}
+// Reordering whole sections on the chart: compares the drag Y only against other
+// sections' header rows in chartRowLayout (ignores individual task rows).
+function computeChartSectionDropTarget(targetY, draggedSection){
+  const headers = chartRowLayout.filter(r=>r.type==='header' && r.section!==draggedSection);
+  if(headers.length===0) return null;
+  for(const h of headers){
+    const mid = (h.yTop+h.yBottom)/2;
+    if(targetY < mid) return {beforeSection: h.section, y: h.yTop};
+  }
+  const last = headers[headers.length-1];
+  return {beforeSection: null, y: last.yBottom};
+}
+function startSectionDragChart(e, section){
+  const startClientY = e.clientY;
+  const origin = chartRowLayout.find(r=>r.type==='header' && r.section===section);
+  if(!origin) return;
   document.body.classList.add('dragging-move');
-  let lastDx = 0;
+  let lastDy = 0, lastTarget = null;
   function onMove(ev){
-    lastDx = ev.clientX - startClientX;
-    els.forEach(g=>g.setAttribute('transform', `translate(${lastDx},0)`));
+    lastDy = ev.clientY - startClientY;
+    lastTarget = computeChartSectionDropTarget(origin.yTop + lastDy, section);
+    showRowGuide(lastTarget ? lastTarget.y : null);
   }
   function onUp(){
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     document.body.classList.remove('dragging-move');
+    hideRowGuide();
+    if(lastTarget){
+      moveSectionBlock(section, lastTarget.beforeSection);
+      renderAll();
+    }
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+// ---------- chart: double-click to rename / add ----------
+function onChartDblClick(e){
+  const target = e.target.closest('[data-role]');
+  if(!target) return;
+  const role = target.dataset.role;
+  if(role==='task-label'){
+    const t = state.tasks.find(x=>x.id===target.dataset.taskId);
+    if(!t) return;
+    const val = prompt('タスク名を編集', t.name);
+    if(val!==null && val.trim()){ t.name = val.trim(); renderAll(); }
+    return;
+  }
+  if(role==='section-label' || role==='section-drag'){
+    const oldSection = target.dataset.section;
+    const val = prompt('セクション名を編集（このセクションの全タスクに反映されます）', oldSection);
+    if(val!==null && val.trim() && val.trim()!==oldSection){
+      const newSection = val.trim();
+      state.tasks.forEach(t=>{ if(t.section===oldSection) t.section = newSection; });
+      renderAll();
+    }
+    return;
+  }
+  if(role==='add-section-row'){
+    const val = prompt('新しいセクション名を入力してください', '新しいセクション');
+    if(val!==null && val.trim()) addTask(val.trim());
+    return;
+  }
+  if(role==='bg' && target.dataset.section){
+    addTask(target.dataset.section);
+    return;
+  }
+}
+document.getElementById('chartHost').addEventListener('dblclick', onChartDblClick);
+function startMoveDrag(e, ids){
+  const startClientX = e.clientX;
+  const startClientY = e.clientY;
+  const dayW = CURRENT.dayW;
+  const rowH = CURRENT.rowH;
+  const els = ids.map(id=>taskGroupEls[id]).filter(Boolean);
+  const singleOrigin = ids.length===1 ? posMapGlobal[ids[0]] : null;
+  document.body.classList.add('dragging-move');
+  let lastDx = 0, lastDy = 0;
+  function onMove(ev){
+    lastDx = ev.clientX - startClientX;
+    lastDy = ev.clientY - startClientY;
+    const dy = singleOrigin ? lastDy : 0;
+    els.forEach(g=>g.setAttribute('transform', `translate(${lastDx},${dy})`));
+    if(singleOrigin && Math.abs(lastDy) > rowH/2){
+      const target = computeChartDropTarget(singleOrigin.y + lastDy);
+      showRowGuide(guideYFor(target));
+    } else {
+      hideRowGuide();
+    }
+  }
+  function onUp(){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('dragging-move');
+    hideRowGuide();
+    if(singleOrigin && Math.abs(lastDy) > rowH/2){
+      const taskId = ids[0];
+      const target = computeChartDropTarget(singleOrigin.y + lastDy);
+      const task = state.tasks.find(x=>x.id===taskId);
+      if(target && task && !(target.beforeTaskId===taskId)){
+        const sectionChanged = task.section !== target.section;
+        moveTask(taskId, target.section, target.beforeTaskId);
+        setStatus(sectionChanged
+          ? `「${task.name}」のセクションを「${target.section}」に変更しました。`
+          : `「${task.name}」の順番を変更しました。`);
+      }
+      renderAll();
+      return;
+    }
     const dayDelta = Math.round(lastDx/dayW);
     if(dayDelta!==0){
       const idSet = new Set(ids);
@@ -858,7 +1203,6 @@ function toDrawio(){
   }
   let y = headerH;
   groups.forEach(g=>{
-    const color = sectionColor(g.section).replace('var(--','#').replace(')','');
     const realColor = getCssColor(g.section);
     cells.push(`<mxCell id="${nid()}" value="${escXml(g.section)}" style="text;html=1;fontStyle=1;fontFamily=IBM Plex Sans JP;fontSize=12;fontColor=#1F2A26;" vertex="1" parent="1"><mxGeometry x="0" y="${y}" width="${nameColW}" height="${rowH}" as="geometry"/></mxCell>`);
     y += rowH;
@@ -880,11 +1224,11 @@ function toDrawio(){
   });
   return `<mxfile host="app.diagrams.net"><diagram name="${escXml(state.title||'Gantt')}" id="ganttDiagram"><mxGraphModel dx="900" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/><object ganttHolidays="${escXml(state.holidays.slice().sort().join(','))}" id="ganttMeta" label="" visible="0"><mxCell style="none;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="1" height="1" as="geometry"/></mxCell></object>${cells.join('')}</root></mxGraphModel></diagram></mxfile>`;
 }
-const RESOLVED_COLORS = ['#3D6A72','#7A8F52','#8C6B3F','#5B6E9A','#96536B','#4F7A50'];
+// sectionColor() now returns a resolved hex value directly (not a CSS var()
+// reference), so it's safe to embed in standalone SVG/XML exports (screenshots,
+// draw.io) without losing color when detached from this page's stylesheet.
 function getCssColor(section){
-  sectionColor(section); // ensure mapped
-  const idx = Object.keys(sectionColorMap).indexOf(section);
-  return RESOLVED_COLORS[idx % RESOLVED_COLORS.length];
+  return sectionColor(section);
 }
 
 // ---------- draw.io import ----------
@@ -922,6 +1266,89 @@ function download(filename, content, mime){
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
+function computeSafeAutoIdCounter(tasks){
+  let max = 0;
+  tasks.forEach(t=>{
+    const m = /^t(\d+)$/.exec(t.id);
+    if(m) max = Math.max(max, parseInt(m[1],10));
+  });
+  return max+1;
+}
+// Exports a fully standalone copy of THIS app, with the current project (title,
+// tasks, holidays) baked in as the default state. The exported file is byte-for-byte
+// this same page except for that one block, so it has identical functionality -
+// opening it continues editing the same chart rather than showing the sample data.
+function exportAsStandaloneHtml(){
+  const currentHtml = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+  const snapshot = {
+    title: state.title,
+    holidays: state.holidays,
+    tasks: state.tasks
+  };
+  const replacement = `/* GANTT_STATE_START */\nlet state = ${JSON.stringify(snapshot, null, 2)};\n/* GANTT_STATE_END */`;
+  const marker = /\/\* GANTT_STATE_START \*\/[\s\S]*?\/\* GANTT_STATE_END \*\//;
+  if(!marker.test(currentHtml)){
+    setStatus('HTMLの書き出しに失敗しました（内部マーカーが見つかりません）。', true);
+    return;
+  }
+  const newHtml = currentHtml.replace(marker, replacement);
+  download((state.title||'gantt')+'.html', newHtml, 'text/html');
+  setStatus('HTMLファイルとして書き出しました。開くとこの内容から続けて編集できます。');
+}
+// Rasterizes the chart's current SVG to a PNG via an offscreen canvas (standard
+// SVG->Image->canvas->PNG technique) and downloads it. The page's font rules for
+// SVG text live in the page stylesheet, not the SVG itself, so a standalone/serialized
+// copy of the SVG needs its own embedded <style> or it silently falls back to a
+// generic serif font when rasterized.
+function exportChartScreenshot(){
+  const svgEl = document.querySelector('#chartHost svg');
+  if(!svgEl){ setStatus('チャートが表示されていません。', true); return; }
+  const svgClone = svgEl.cloneNode(true);
+  const guide = svgClone.querySelector('#rowDropGuide');
+  if(guide) guide.remove();
+  if(!svgClone.getAttribute('xmlns')) svgClone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  const styleEl = document.createElementNS('http://www.w3.org/2000/svg','style');
+  styleEl.textContent = `text{font-family:'IBM Plex Sans JP',sans-serif;} .mono-text{font-family:'IBM Plex Mono',monospace;}`;
+  svgClone.insertBefore(styleEl, svgClone.firstChild);
+  const svgString = new XMLSerializer().serializeToString(svgClone);
+  const svgBlob = new Blob([svgString], {type:'image/svg+xml;charset=utf-8'});
+  const svgUrl = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  const rasterize = () => {
+    const scale = 2;
+    const w = parseFloat(svgEl.getAttribute('width')) || svgEl.viewBox.baseVal.width;
+    const h = parseFloat(svgEl.getAttribute('height')) || svgEl.viewBox.baseVal.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w*scale));
+    canvas.height = Math.max(1, Math.round(h*scale));
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.fillStyle = '#F7F7F2';
+    ctx.fillRect(0,0,w,h);
+    ctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(svgUrl);
+    canvas.toBlob(blob=>{
+      if(!blob){ setStatus('スクリーンショットの生成に失敗しました。', true); return; }
+      const pngUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = pngUrl; a.download = (state.title||'gantt')+'.png';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(pngUrl);
+      setStatus('ガントチャートの画像(PNG)を書き出しました。');
+    }, 'image/png');
+  };
+  img.onload = () => {
+    // Ensure the web fonts are actually loaded before drawing, so the raster
+    // doesn't lock in a fallback font if this is the very first export.
+    if(document.fonts && document.fonts.ready) document.fonts.ready.then(rasterize).catch(rasterize);
+    else rasterize();
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(svgUrl);
+    setStatus('スクリーンショットの生成に失敗しました。', true);
+  };
+  img.src = svgUrl;
+}
 function setStatus(msg, isError){
   const el = document.getElementById('status');
   el.textContent = msg;
@@ -936,8 +1363,11 @@ function readFile(file, cb){
 
 // ---------- wiring ----------
 document.getElementById('titleInput').addEventListener('input', e=>{ state.title = e.target.value; });
-document.getElementById('addTaskBtn').addEventListener('click', addTask);
-document.getElementById('addTaskTop').addEventListener('click', addTask);
+document.getElementById('addTaskBtn').addEventListener('click', ()=>addTask());
+document.getElementById('addTaskTop').addEventListener('click', ()=>addTask());
+document.getElementById('togglePanelBtn').addEventListener('click', ()=>{
+  document.getElementById('taskPanel').classList.toggle('collapsed');
+});
 
 function renderHolidayChips(){
   const host = document.getElementById('holidayChips');
@@ -971,6 +1401,8 @@ document.getElementById('exportDrawioBtn').addEventListener('click', ()=>{
   download((state.title||'gantt')+'.drawio', toDrawio(), 'application/xml');
   setStatus('draw.ioファイル(.drawio)を書き出しました。app.diagrams.netやdraw.ioデスクトップ版で開けます。');
 });
+document.getElementById('exportHtmlBtn').addEventListener('click', exportAsStandaloneHtml);
+document.getElementById('exportPngBtn').addEventListener('click', exportChartScreenshot);
 document.getElementById('importMermaidFile').addEventListener('change', e=>{
   const file = e.target.files[0]; if(!file) return;
   readFile(file, text=>{
